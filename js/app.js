@@ -124,6 +124,107 @@
     textEl.focus();
   });
 
+  /* ---------- 文件上传识别（Word/PDF/TXT/图片 OCR） ---------- */
+  var upZone = $('upload-zone'),
+    upInput = $('essay-file'),
+    upBox = $('upload-progress'),
+    upName = $('up-name'),
+    upBar = $('up-bar'),
+    upStatus = $('up-status'),
+    upCancel = $('up-cancel');
+  var uploadSeq = 0; // 用于取消后丢弃迟到的解析结果
+
+  function pickFile() {
+    if (!upZone.classList.contains('busy')) upInput.click();
+  }
+  upZone.addEventListener('click', pickFile);
+  upZone.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickFile(); }
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    upZone.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      upZone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    upZone.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      upZone.classList.remove('dragover');
+    });
+  });
+  upZone.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+  upInput.addEventListener('change', function () {
+    if (upInput.files && upInput.files[0]) handleFile(upInput.files[0]);
+    upInput.value = ''; // 允许重复选择同一个文件
+  });
+  upCancel.addEventListener('click', function () { resetUploadUI(); });
+
+  function resetUploadUI() {
+    uploadSeq++;
+    upBox.hidden = true;
+    upBox.classList.remove('ok', 'error');
+    upZone.classList.remove('busy');
+    upBar.style.width = '0%';
+    upStatus.className = 'up-status';
+  }
+
+  function setUploadProgress(name, statusText, ratio) {
+    upName.textContent = name;
+    upStatus.textContent = statusText;
+    upBar.style.width = Math.round((ratio || 0) * 100) + '%';
+  }
+
+  function handleFile(file) {
+    if (!window.EssayFile) {
+      tipEl.textContent = '文件识别组件未加载（file-upload.js 缺失），请刷新页面。';
+      tipEl.classList.add('show');
+      return;
+    }
+    var seq = ++uploadSeq;
+    upZone.classList.add('busy');
+    upBox.hidden = false;
+    upBox.classList.remove('ok', 'error');
+    upStatus.className = 'up-status';
+    setUploadProgress(file.name, '准备识别……', 0.05);
+
+    EssayFile.extract(file, function (p) {
+      if (seq !== uploadSeq) return;
+      setUploadProgress(file.name, p.status || '识别中……', p.ratio || 0);
+    }).then(function (res) {
+      if (seq !== uploadSeq) return; // 已被取消
+      textEl.value = res.text;
+      // 识别出的首行标题：仅在用户未填标题时自动带入
+      if (res.titleGuess && !titleEl.value.trim()) titleEl.value = res.titleGuess;
+      updateCount();
+      var n = EssayEngine.cjkLen(res.text);
+      var msg = '✓ 识别成功，已填入正文框，共约 ' + n + ' 字';
+      if (res.kind === 'image') {
+        msg += '。图片 OCR 可能有少量错字，请对照原文核对修改后再批改';
+      } else if (res.titleGuess) {
+        msg += '，并已自动识别标题《' + res.titleGuess + '》';
+      }
+      msg += '。';
+      upStatus.textContent = msg;
+      upStatus.className = 'up-status ok';
+      upBox.classList.add('ok');
+      upBar.style.width = '100%';
+      upZone.classList.remove('busy');
+      tipEl.textContent = '';
+      tipEl.classList.remove('show');
+      textEl.focus();
+    }).catch(function (err) {
+      if (seq !== uploadSeq) return;
+      upStatus.textContent = '✗ ' + (err && err.message ? err.message : '识别失败，请重试或直接粘贴文字。');
+      upStatus.className = 'up-status error';
+      upBox.classList.add('error');
+      upZone.classList.remove('busy');
+    });
+  }
+
   /* ---------- 步骤切换（带浏览器历史，返回键不退出网站） ---------- */
   function showStep(n, push) {
     document.querySelectorAll('.stepper .step').forEach(function (el) {
