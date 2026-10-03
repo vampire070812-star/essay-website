@@ -196,18 +196,35 @@
       setUploadProgress(file.name, p.status || '识别中……', p.ratio || 0);
     }).then(function (res) {
       if (seq !== uploadSeq) return; // 已被取消
-      textEl.value = res.text;
-      // 识别出的首行标题：仅在用户未填标题时自动带入
-      if (res.titleGuess && !titleEl.value.trim()) titleEl.value = res.titleGuess;
+
+      // 自动拆分：文件中若同时包含「作文题目」与「作文（标题+正文）」，
+      // 只把题目拆到第一步；标题保留在正文首行，不单独填写。
+      var bodyText = res.text;
+      var splitMsg = '';
+      try {
+        var split = EssayFile.splitDocument(res.text);
+        if (split.detected) {
+          if (!promptEl.value.trim()) {
+            promptEl.value = split.prompt;
+            bodyText = split.essay;
+            splitMsg = '已自动识别出作文题目并填入上方第一步（标题保留在正文首行，无需单独填写）';
+            if (examSel.value) examSel.value = '';
+          } else {
+            splitMsg = '题目框已有内容，文件全文已作为作文正文（如需改用文件中的题目，请先清空上方题目框再重新上传）';
+          }
+        } else {
+          splitMsg = '未检测到独立的作文题目，全部内容已作为作文正文；如需审题可在第一步单独粘贴题目';
+        }
+      } catch (e) { splitMsg = ''; }
+
+      textEl.value = bodyText;
       updateCount();
-      var n = EssayEngine.cjkLen(res.text);
-      var msg = '✓ 识别成功，已填入正文框，共约 ' + n + ' 字';
+      var n = EssayEngine.cjkLen(bodyText);
+      var msg = '✓ 识别成功，共约 ' + n + ' 字。' + splitMsg;
       if (res.kind === 'image') {
         msg += '。图片 OCR 可能有少量错字，请对照原文核对修改后再批改';
-      } else if (res.titleGuess) {
-        msg += '，并已自动识别标题《' + res.titleGuess + '》';
       }
-      msg += '。';
+      if (!/。$/.test(msg)) msg += '。';
       upStatus.textContent = msg;
       upStatus.className = 'up-status ok';
       upBox.classList.add('ok');

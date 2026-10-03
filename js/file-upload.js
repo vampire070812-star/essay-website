@@ -262,6 +262,124 @@
     return '';
   }
 
+  /* ---------- 自动拆分「作文题目」与「作文正文（含标题）」 ----------
+   * 只负责把题目材料分出来；标题不拆分，保留在正文首行。
+   * 返回 { detected, prompt, essay, by }
+   * by: 'label'（有明确栏目标记）/ 'rule'（靠写作要求句式推断）
+   */
+  // 强题目标记：作文题目 / 作文材料 / 写作题 / 题目： 等（行首，后接括号/冒号/空格）
+  var PROMPT_LABEL = /^[【\[]?\s*(?:作文题目|作文材料|写作题目|写作题|作文题|材料作文|题目|材料)\s*(?:[】\]]|[:：、.．]|\s)\s*/;
+  var PROMPT_LABEL_ALONE = /^[【\[]?\s*(?:作文题目|作文材料|写作题目|写作题|作文题|材料作文|题目|材料)\s*[】\]]?\s*[:：、.．]?\s*$/;
+  // 正文/作文开始标记
+  var ESSAY_LABEL = /^[【\[]?\s*(?:学生作文|考场作文|优秀作文|满分作文|范文|例文|作文示例|学生习作|作文|正文|文章)\s*(?:[】\]]|[:：、.．]|\s)\s*/;
+  var ESSAY_LABEL_ALONE = /^[【\[]?\s*(?:学生作文|考场作文|优秀作文|满分作文|范文|例文|作文示例|学生习作|作文|正文|文章)\s*[】\]]?\s*[:：、.．]?\s*$/;
+  // 题目开头用语
+  var PROMPT_START = /^(?:阅读下面(?:的)?(?:材料|文字)|根据(?:以下|下面|上述|所给)?(?:材料|要求)|阅读下列材料|阅读材料)/;
+  // 写作要求（题目结尾的典型句式）
+  var REQ_TAIL = /写(?:一篇|作)|不少?于\s*\d{3,4}\s*字|\d{3,4}\s*字(?:左右|以上)|题目自拟|自拟(?:题目|标题)|选(?:准|好|取|一个)?角度|明确文体|不要脱离材料|综合材料内容及含意|结合材料/;
+  var REQ_LINE = /^\s*要求\s*[:：]/;
+  // 强写作指令（作文正文里几乎不可能出现）：800字/自拟标题/明确文体/不要套作 等
+  var REQ_STRONG =
+    /不少?于\s*\d{3,4}\s*字|\d{3,4}\s*字(?:以上|左右)|题目自拟|自拟(?:题目|标题)|明确文体|不要套作|不得抄袭|不要脱离材料内容/;
+
+  function stripLabel(s, re, aloneRe) {
+    var t = String(s || '').trim();
+    if (aloneRe.test(t)) return '';
+    return t.replace(re, '').trim();
+  }
+
+  function splitDocument(raw) {
+    var full = normalizeText(raw);
+    var paras = full.split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    var none = { detected: false, prompt: '', essay: full, by: '' };
+    if (paras.length < 3) return none;
+
+    var promptIdx = -1, essayIdx = -1, i, j;
+
+    // 1) 找题目标记（前 12 段内）；单独成行的标记、或行首"题目：……"均可
+    for (i = 0; i < Math.min(paras.length, 12); i++) {
+      if (PROMPT_LABEL_ALONE.test(paras[i]) || (i <= 6 && PROMPT_LABEL.test(paras[i]))) {
+        promptIdx = i; break;
+      }
+    }
+    // 2) 找正文标记（必须在题目标记之后，或文件前半部分）
+    var searchFrom = promptIdx >= 0 ? promptIdx + 1 : 0;
+    for (j = searchFrom; j < paras.length - 1; j++) {
+      if (ESSAY_LABEL_ALONE.test(paras[j]) || ESSAY_LABEL.test(paras[j])) { essayIdx = j; break; }
+    }
+
+    var promptParts = [], essayParts = [], by = '';
+
+    if (promptIdx >= 0 && essayIdx > promptIdx) {
+      // 两个标记都在
+      promptParts = paras.slice(promptIdx, essayIdx);
+      promptParts[0] = stripLabel(promptParts[0], PROMPT_LABEL, PROMPT_LABEL_ALONE);
+      essayParts = paras.slice(essayIdx + 1);
+      var headInline = stripLabel(paras[essayIdx], ESSAY_LABEL, ESSAY_LABEL_ALONE);
+      if (headInline) essayParts.unshift(headInline);
+      by = 'label';
+    } else if (essayIdx >= 0 && promptIdx < 0) {
+      // 只有正文标记：前面整体当作题目——但前文必须有题目特征（引导语/写作要求），
+      // 否则可能是正文中偶然出现的"作文/正文"字样，交给规则分支再判
+      var beforeText = paras.slice(0, essayIdx).join('');
+      if (REQ_TAIL.test(beforeText) || PROMPT_START.test(paras[0])) {
+        promptParts = paras.slice(0, essayIdx);
+        essayParts = paras.slice(essayIdx + 1);
+        var headInline2 = stripLabel(paras[essayIdx], ESSAY_LABEL, ESSAY_LABEL_ALONE);
+        if (headInline2) essayParts.unshift(headInline2);
+        by = 'label';
+      } else {
+        essayIdx = -1; // 该标记不可信，回落规则推断
+      }
+    }
+    if (!by) {
+      // 3) 无明确标记：靠"写作要求"句式找题目结尾
+      var startIdx = 0;
+      if (promptIdx >= 0) {
+        startIdx = promptIdx;
+        paras[promptIdx] = stripLabel(paras[promptIdx], PROMPT_LABEL, PROMPT_LABEL_ALONE);
+      }
+      var headLikePrompt = PROMPT_START.test(paras[0]) || promptIdx === 0;
+      var limit = Math.max(2, Math.floor(paras.length * 0.45));
+      var tailIdx = -1;
+      for (i = Math.max(1, startIdx); i <= Math.min(limit, paras.length - 2); i++) {
+        var p = paras[i];
+        // 必须含"不少于800字/自拟标题/明确文体"等强指令，普通作文正文不会出现这些词
+        if (REQ_STRONG.test(p) && (headLikePrompt || promptIdx === 0 || REQ_LINE.test(p) || i <= 4)) {
+          tailIdx = i; // 取最后一个匹配段（要求可能跨两句）
+        }
+      }
+      if (tailIdx < 0) return none;
+
+      // 无引导语、无题目标记时，拆出的作文首段必须像"标题行"（短且无句末标点）
+      if (!headLikePrompt && promptIdx < 0) {
+        var firstEssayPara = paras[tailIdx + 1] || '';
+        var looksLikeTitle = firstEssayPara.length >= 2 && firstEssayPara.length <= 22 &&
+          !/[。！？，；：、…!?]/.test(firstEssayPara);
+        if (!looksLikeTitle) return none;
+      }
+
+      promptParts = paras.slice(0, tailIdx + 1);
+      essayParts = paras.slice(tailIdx + 1);
+      by = 'rule';
+    }
+
+    var prompt = normalizeText(promptParts.filter(Boolean).join('\n\n'));
+    var essay = normalizeText(essayParts.filter(Boolean).join('\n\n'));
+
+    // 合理性校验：题目长度 15-900；正文要比题目长且不少于 80 字，否则判为误拆
+    var pLen = cjkCount(prompt), eLen = cjkCount(essay);
+    if (pLen < 12 || pLen > 900 || eLen < 80 || eLen <= pLen) return none;
+    // 正文里不应再出现大段"写作要求"指令（误拆特征）
+    if (/选准角度.*不要脱离材料内容/.test(essay)) return none;
+
+    return { detected: true, prompt: prompt, essay: essay, by: by };
+  }
+
+  function cjkCount(s) {
+    return (String(s || '').match(/[一-鿿]/g) || []).length;
+  }
+
   /* ---------- 主入口 ----------
    * extract(file, onProgress) -> Promise<{text, kind, titleGuess, ocr?}>
    * onProgress({status, ratio})
@@ -296,6 +414,7 @@
 
   window.EssayFile = {
     extract: extract,
+    splitDocument: splitDocument,
     supported: '.txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp',
     guessTitle: guessTitle
   };

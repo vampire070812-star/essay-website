@@ -1141,7 +1141,8 @@
       paragraphAdvice: paraAdvice.slice(0, 8),
       suggestions: sugArr.slice(0, 10),
       praises: praises.slice(0, 6),
-      title: title, type: type
+      // 标题未单独填写时，用正文首行（像标题的短行）作为报告标题
+      title: title || (titleLine ? paragraphs[0] : ''), type: type
     };
   }
 

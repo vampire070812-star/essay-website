@@ -334,7 +334,7 @@
       rewrites: rewrites,
       paragraphAdvice: paragraphAdvice,
       suggestions: sugs, praises: praises,
-      title: opts.title, type: opts.type,
+      title: opts.title || local.title || '', type: opts.type,
       engine: 'ai'
     };
   }
