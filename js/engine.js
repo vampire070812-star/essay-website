@@ -245,9 +245,9 @@
       deCount++;
       addMark(dm.index + dm[0].length - 1, dm.index + dm[0].length, 'mk-error', '这里应该用“地”：修饰动词用“地”', 0);
     }
-    if (deCount > 0) {
-      addSug('dede', 'error', '区分“的、地、得”',
-        '检测到 ' + deCount + ' 处动词前的修饰语后误用“的”，应改为“地”。口诀：名词前用“的”，动词前用“地”，动词后补语前用“得”。');
+    if (deCount >= 2) {
+      addSug('dede', 'warn', '注意“的、地、得”（共 ' + deCount + ' 处）',
+        '上传/OCR 识别可能产生误差，若是原文笔误请注意：名词前用“的”，动词前用“地”，动词后补语前用“得”。考场阅卷以段落整体为单位，个别混用不影响大局。');
     }
 
     // 错别字
@@ -265,46 +265,57 @@
       [/纯感/g, '注意：材料若是“钝感”，不要写成“纯感”']
     ];
     var typoWords = [];
+    var typoShown = 0;
     wordTypos.forEach(function (pair) {
       var m;
       while ((m = pair[0].exec(text))) {
-        addMark(m.index, m.index + m[0].length, 'mk-error', '应为“' + pair[1] + '”', 0);
+        if (typoShown < 3) {
+          addMark(m.index, m.index + m[0].length, 'mk-error', '应为“' + pair[1] + '”（若系识别误差请以原文为准）', 0);
+          typoShown++;
+        }
         typoWords.push('“' + m[0] + '”→“' + pair[1] + '”');
       }
     });
-    var dupRe = /(的的|了了|是是|就就|和和|都都|也也|很很|会会|不不不)/g, dpm;
+    var dupRe = /(的的|了了|是是|就就|和和|都都|也也|很很|会会|不不不)/g, dpm, dupShown = 0;
     while ((dpm = dupRe.exec(text))) {
-      addMark(dpm.index, dpm.index + dpm[0].length, 'mk-error', '疑似重复输入', 0);
+      if (dupShown < 2) {
+        addMark(dpm.index, dpm.index + dpm[0].length, 'mk-error', '疑似重复输入（若系识别误差请以原文为准）', 0);
+        dupShown++;
+      }
       if (typoWords.indexOf('“' + dpm[0] + '”重复') < 0) typoWords.push('“' + dpm[0] + '”重复');
     }
-    var repRe = /(然后|就是|因为|所以|那个|这个|于是|而且|并且){2,}/g, rpm;
+    var repRe = /(然后|就是|因为|所以|那个|这个|于是|而且|并且){2,}/g, rpm, repShown = 0;
     while ((rpm = repRe.exec(text))) {
-      addMark(rpm.index, rpm.index + rpm[0].length, 'mk-error', '词语重复，删去一个', 0);
+      if (repShown < 2) {
+        addMark(rpm.index, rpm.index + rpm[0].length, 'mk-error', '词语重复，删去一个', 0);
+        repShown++;
+      }
       if (typoWords.indexOf('“' + rpm[0].slice(0, 2) + '”重复') < 0) typoWords.push('“' + rpm[0].slice(0, 2) + '”重复');
     }
     if (typoWords.length) {
-      addSug('typo', 'error', '疑似错别字 ' + typoWords.length + ' 处',
-        '文中发现：' + uniq(typoWords).slice(0, 8).join('、') + '。考场作文错别字每处都可能扣分，材料中的关键词尤其要抄对，提交前逐字再读一遍。');
+      addSug('typo', 'warn', '疑似错别字/识别误差 ' + typoWords.length + ' 处',
+        '文中发现：' + uniq(typoWords).slice(0, 6).join('、') + '。上传/OCR 识别可能出错，请以原文为准；考场阅卷快速扫读，重点关注段落整体与思辨逻辑，个别字词偏差不影响大局。');
     }
 
-    // 英文标点
+    // 英文标点（宽容处理：上传/OCR 常见误差，仅提示不计硬伤）
     var epRe = /[A-Za-z一-龥][,.!?;:]|[,.!?;:][A-Za-z一-龥]/g, epm, epCount = 0;
     while ((epm = epRe.exec(text))) {
       var pi = /[,.!?;:]/.test(epm[0][0]) ? epm.index : epm.index + 1;
       epCount++;
-      if (epCount <= 6) addMark(pi, pi + 1, 'mk-error', '应使用中文全角标点', 0);
+      if (epCount <= 2) addMark(pi, pi + 1, 'mk-warn', '应为全角标点（上传识别常见误差，请以原文为准）', 1);
     }
     if (epCount) {
-      addSug('enpunct', 'error', '使用了英文标点',
-        '检测到 ' + epCount + ' 处英文半角标点，高考作文应统一使用全角标点（，。！？；：）。');
+      addSug('enpunct', 'warn', '个别标点疑似英文半角（共 ' + epCount + ' 处）',
+        '上传/OCR 常把全角标点识别成半角，请以原文为准。考场阅卷关注段落整体，个别标点偏差不影响大局。');
     }
 
-    // 标点连用
+    // 标点连用（宽容：最多提示 2 处，不单独生成建议卡）
     var ppRe = /[，。！？、；：,]{2,}/g, ppm, ppCount = 0;
-    while ((ppm = ppRe.exec(text))) {
+    while ((ppm = ppRe.exec(text)) && ppCount < 2) {
       ppCount++;
-      addMark(ppm.index, ppm.index + ppm[0].length, 'mk-warn', '标点重复，删去多余的', 1);
+      addMark(ppm.index, ppm.index + ppm[0].length, 'mk-warn', '标点重复（若系识别误差请忽略）', 1);
     }
+    while ((ppm = ppRe.exec(text))) ppCount++;
 
     // 长句
     var runRe = /[一-龥]{55,}/g, runm, runCount = 0;
@@ -318,22 +329,28 @@
         '有 ' + runCount + ' 处连续 55 字以上没有停顿，议论文长句太多会淹没逻辑，建议在语意分层处断句。');
     }
 
-    // 网络用语 / 口语
+    // 网络用语 / 口语（容忍度提高：仅标记前 2 处，扣分大幅降低）
     var netRe = /绝绝子|yyds|666|栓Q|神马(?:都是浮云)?|有木有|辣鸡|我勒个去|老铁|没毛病|扎心了|我也是醉了|醉了|卧槽|尼玛|牛批|牛逼/gi;
-    var netWords = [], nwm;
+    var netWords = [], nwm, netShown = 0;
     while ((nwm = netRe.exec(text))) {
       netWords.push(nwm[0]);
-      addMark(nwm.index, nwm.index + nwm[0].length, 'mk-error', '网络用语不宜出现在高考作文中', 0);
+      if (netShown < 2) {
+        addMark(nwm.index, nwm.index + nwm[0].length, 'mk-warn', '网络用语建议换成书面语', 1);
+        netShown++;
+      }
     }
     if (netWords.length) {
-      addSug('netslang', 'error', '网络用语 ' + netWords.length + ' 处',
-        '“' + uniq(netWords).slice(0, 5).join('、') + '”属于网络口语，高考议论文要求规范书面表达，请换成规范词语。');
+      addSug('netslang', 'warn', '网络用语 ' + netWords.length + ' 处',
+        '“' + uniq(netWords).slice(0, 5).join('、') + '”属于网络口语，建议换成规范书面表达。');
     }
     var talkRe = /超级(?:好吃|棒|好|开心|爽|可爱|帅)|咋(?:整|样|办|了)|干啥|啥玩意|哥们儿|姐们儿|贼(?:好吃|棒|好)|特别特别/g;
-    var talkWords = [], twm;
+    var talkWords = [], twm, talkShown = 0;
     while ((twm = talkRe.exec(text))) {
       talkWords.push(twm[0]);
-      addMark(twm.index, twm.index + twm[0].length, 'mk-warn', '口语化表达，建议改为书面语', 1);
+      if (talkShown < 2) {
+        addMark(twm.index, twm.index + twm[0].length, 'mk-warn', '口语化表达，建议改为书面语', 1);
+        talkShown++;
+      }
     }
 
     // “然后”泛滥
@@ -630,13 +647,14 @@
       if (mark) addMark(s, e, 'mk-logic', '【' + name + '】' + why, 1);
     }
 
-    // —— 1. 绝对化表述 / 以偏概全 ——
+    // —— 1. 绝对化表述 / 以偏概全（只标记作为核心论点的全称判断；句间稍有跳跃可接受）——
     var absRe = /[^。！？；!?]{0,12}(?:任何|所有|一切|凡是|从来都?|总是|永远|绝对(?:不|能)?|百分之百|毫无例外|不可能(?:有|存在))[^。！？；!?]{0,28}[。！？；!?]?/g;
     var absm, absShown = 0;
-    while ((absm = absRe.exec(text)) && absShown < 4) {
-      if (cjkLen(absm[0]) < 8) continue;
+    while ((absm = absRe.exec(text)) && absShown < 2) {
+      if (cjkLen(absm[0]) < 14) continue; // 短句不视为论证层面的全称判断
+      if (/往往|大多|多数|通常|一般|在.+时|在.+中/.test(absm[0])) continue; // 已有限定语的不算
       addFallacy('以偏概全/绝对化', absm.index, Math.min(absm.index + absm[0].length, absm.index + 30),
-        '全称判断需要充分论据支撑；用“往往、多数情况下、在……情境中”作限定，论证更严谨。', true);
+        '该全称判断若为全文或本段核心论点，需要一个更严密的成立条件；用“往往、在……情境中”限定后更难被反例驳倒。', true);
       absShown++;
     }
     if (absShown > 0 && rewrites.length < 6) {
@@ -653,30 +671,32 @@
       }
     }
 
-    // —— 2. 滑坡推理 ——
+    // —— 2. 滑坡推理（只标记跨越多步的极端推断；单步合理推断不算）——
     var slipRe = /[^。！？；!?]{0,10}(?:长此以往|久而久之|这样下去|倘若(?:一直)?|如果(?:一直|每个人都)?|一旦)[^。！？；!?]{0,40}(?:必将|必然|终将|最终|就会|导致|整个社会|后果不堪设想|不可收拾)[^。！？；!?]{0,24}[。！？；!?]?/g;
     var slipm, slipShown = 0;
-    while ((slipm = slipRe.exec(text)) && slipShown < 2) {
-      if (cjkLen(slipm[0]) < 12) continue;
+    while ((slipm = slipRe.exec(text)) && slipShown < 1) {
+      if (cjkLen(slipm[0]) < 16) continue;
       addFallacy('滑坡推理', slipm.index, Math.min(slipm.index + slipm[0].length, slipm.index + 34),
-        '从起点到极端后果之间缺少环环相扣的论证，连锁恶果不会自动发生。', true);
+        '这是从起点直接跳到极端后果的多步推断，中间环节没有论证，属于论证层面的跳跃。', true);
       slipShown++;
     }
 
-    // —— 3. 非黑即白 ——
+    // —— 3. 非黑即白（只标记作为分论点或结论的极端二分）——
     var bnwRe = /[^。！？；!?]{0,8}(?:不是[^，。！？；!?]{2,20}就是|要么[^，。！？；!?]{2,16}要么|不能[^，。！？；!?]{2,18}只能|与其[^，。！？；!?]{2,16}不如)[^。！？；!?]{0,20}/g;
-    var bnwm;
-    while ((bnwm = bnwRe.exec(text))) {
+    var bnwm, bnwShown = 0;
+    while ((bnwm = bnwRe.exec(text)) && bnwShown < 2) {
       addFallacy('非黑即白', bnwm.index, Math.min(bnwm.index + bnwm[0].length, bnwm.index + 34),
-        '把选择压缩成两个极端，忽略了中间状态与第三种可能。', true);
+        '此处把选择压缩成两个极端，忽略了中间状态与第三种可能，影响论证的思辨广度。', true);
+      bnwShown++;
     }
 
     // —— 4. 强加因果：个人事例直接推出普遍结论 ——
     var forceRe = /[^。！？；!?]{0,6}(?:我有一次|我上次|我同桌|我有个同学|有一次)[^。！？；!?]{0,60}(?:所以说|因此|可见|这告诉我们|我们要|我们应该)[^。！？；!?]{0,30}/g;
-    var fm;
-    while ((fm = forceRe.exec(text))) {
+    var fm, forceShown = 0;
+    while ((fm = forceRe.exec(text)) && forceShown < 2) {
       addFallacy('强加因果', fm.index, Math.min(fm.index + fm[0].length, fm.index + 36),
         '单个事例只能说明“存在这种情况”，不能直接推出普遍性结论；需补因果机制分析。', true);
+      forceShown++;
     }
 
     // —— 5. 例后无分析（在以例代证的句子上打逻辑批注，最多 3 处）——
@@ -800,28 +820,29 @@
       return null;
     }
 
-    // —— 论证链条评价 ——
+    // —— 论证链条评价（聚焦整体思辨与论证逻辑；考场篇幅有限，句间稍有跳跃不扣分）——
     var chainParts = [];
     if (logicThesis === '（全文未出现明确中心论点）') {
       chainParts.push('全文没有可识别的中心论点句，各段缺少共同的论证靶子，论证链条从起点处就是松散的。');
     } else {
       chainParts.push('中心论点在文中可识别（“' + logicThesis.slice(0, 36) + (logicThesis.length > 36 ? '…' : '') + '”）。');
     }
-    if (hasConcede && hasTurn) chainParts.push('论证呈现“让步—转折”的辩证推进，段落之间有层次；');
-    else if (oneSided) chainParts.push('全文单向推进，缺少让步与转折段，论证链只有一面之词；');
-    if (depthN > 0) chainParts.push('并出现向本质/条件层面的递进；');
-    else chainParts.push('但未见向“本质、条件、更高标准”的递进段，深度不足；');
-    if (exampleStack) chainParts.push('论据段与论点之间缺少分析句咬合，链条在举例处断裂。');
-    else if (exampleGood) chainParts.push('事例之后配有分析，论据与论点咬合较好。');
+    if (hasConcede && hasTurn) chainParts.push('段落层面呈现“让步—转折”的辩证推进，整体思辨结构成立；');
+    else if (oneSided) chainParts.push('整体思辨结构单向推进，缺少对对立面合理性的承认与回应，思辨广度受限；');
+    if (depthN > 0) chainParts.push('并能向本质/条件层面递进，思辨有纵深；');
+    else chainParts.push('但未见向“本质、条件、更高标准”推进的段落，思辨深度不足——可以尝试追问“这一观点在什么条件下成立、推到极端会怎样”；');
+    if (exampleStack) chainParts.push('论据段与论点之间缺少分析句咬合，论证链在举例处断裂。');
+    else if (exampleGood) chainParts.push('事例之后配有分析，论据与论点在段落层面咬合较好。');
     if (measureHeavy) chainParts.push('后半篇由说理滑向做法罗列，论证方向发生偏移。');
+    chainParts.push('（考场作文篇幅有限，句间稍有跳跃属正常现象，以上评价以段落与全文整体逻辑为准。）');
     var logicChain = chainParts.join('');
 
     var logicStrengths = [];
-    if (defineN > 0) logicStrengths.push('对核心概念有界定意识，为论证划定了讨论边界');
-    if (hasConcede && hasTurn) logicStrengths.push('“先让步、再质疑”的段落安排使论证具有思辨张力');
-    if (depthN > 0) logicStrengths.push('能用“进一步/本质上”把论证推向更深层次');
-    if (exampleGood) logicStrengths.push('事例后有分析句跟进，论据与论点联系紧密');
-    if (realityN > 0) logicStrengths.push('设置了联系当下的段落，文章有现实针对性');
+    if (defineN > 0) logicStrengths.push('对核心概念有界定意识，为论证划定了讨论边界，体现思辨的严谨度');
+    if (hasConcede && hasTurn) logicStrengths.push('“先让步、再质疑”的整体结构使论证具有思辨张力与广度');
+    if (depthN > 0) logicStrengths.push('能用“进一步/本质上”把论证推向更深层次，思辨有纵深');
+    if (exampleGood) logicStrengths.push('事例后有分析句跟进，论据与论点在段落层面联系紧密');
+    if (realityN > 0) logicStrengths.push('设置了联系当下的段落，文章有现实针对性，拓展了思辨广度');
     if (!logicStrengths.length && chars >= 500) logicStrengths.push('能够围绕一个话题完整成篇，结构基本闭合');
 
     var logicReview = {
@@ -832,14 +853,18 @@
       strengths: logicStrengths.slice(0, 3)
     };
 
-    // —— 逐段修改建议 ——
+    // —— 逐段修改建议（聚焦思辨深度、广度与段落功能连贯性）——
     paraFlow.forEach(function (pf) {
       if (pf.issue === '无' || paraAdvice.length >= 6) return;
       var advice;
-      if (/过短/.test(pf.issue)) advice = '第 ' + pf.para + ' 段只有寥寥数语：补一个道理论据或具体分析句把它展开到 100 字以上。';
-      else if (/以例代证/.test(pf.issue)) advice = '第 ' + pf.para + ' 段事例后补 1-2 句分析：用“这说明……/之所以……是因为……”回答例子与分论点的关系。';
-      else if (/怎么做/.test(pf.issue)) advice = '第 ' + pf.para + ' 段压缩做法罗列，改为分析“为什么会这样、在什么条件下成立”，做法留到结尾一段点到。';
-      else if (/多个论证层次/.test(pf.issue)) advice = '第 ' + pf.para + ' 段过长：按“分论点—论据—分析”拆成两段，层次会立刻清晰。';
+      if (/过短/.test(pf.issue)) advice = '第 ' + pf.para + ' 段过短，论证未展开：补一个具体论据+分析句，把该段核心观点说透。';
+      else if (/以例代证/.test(pf.issue)) advice = '第 ' + pf.para + ' 段只有事例没有分析：用“这说明……/之所以……是因为……”写出2-3句分析，把例子与分论点的咬合关系说清。';
+      else if (/怎么做/.test(pf.issue)) advice = '第 ' + pf.para + ' 段压缩做法罗列，改为分析“为什么会这样、在什么条件下成立”，做法留到结尾点到即可。';
+      else if (/多个论证层次/.test(pf.issue)) advice = '第 ' + pf.para + ' 段层次太多：按“分论点—论据—分析”拆成两段，每段只推进一层思辨。';
+      else if (/让步|转折/.test(pf.role) && pf.para < pn * 0.5) advice = '第 ' + pf.para + ' 段较早出现让步/转折：可在承认对方后，追问“这种合理性的边界在哪里”，让思辨向纵深推进。';
+      else if (/分论点论证/.test(pf.role) && !/让步|转折|递进/.test(pf.role) && pf.para < pn - 1) {
+        advice = '第 ' + pf.para + ' 段可考虑补充对反方观点的有限承认（“诚然……”），再用“然而”质疑其边界，增强思辨广度。';
+      }
       else advice = '第 ' + pf.para + ' 段：' + pf.issue;
       paraAdvice.push({ para: pf.para, advice: advice });
     });
@@ -905,15 +930,15 @@
     if (quoteCount > 0) score += Math.min(1, quoteCount);
     if (!hasTitle && chars >= 600) score -= 1;
 
-    // 语言
-    score -= Math.min(7, Math.round(typoWords.length * 1.5));
-    score -= Math.min(2, Math.floor(epCount / 2));
-    score -= Math.min(5, netWords.length * 2);
-    score -= Math.min(4, Math.floor(runCount / 2));
+    // 语言（容错提高：错别字/标点大幅降权，聚焦整体表达与思辨）
+    score -= Math.min(2, Math.round(typoWords.length * 0.5));
+    score -= Math.min(1, Math.floor(epCount / 3));
+    score -= Math.min(2, netWords.length * 0.8);
+    score -= Math.min(2, Math.floor(runCount / 2));
     if (avgLen && avgLen < 8) score -= 1;
-    else if (avgLen > 45) score -= 2;
+    else if (avgLen > 45) score -= 1;
     if (ranhou >= 4) score -= 1;
-    if (deCount) score -= Math.min(2, deCount);
+    if (deCount) score -= Math.min(1, deCount);
     if (rhetoricCount >= 3) score += 2; else if (rhetoricCount >= 1) score += 1;
     if (idiomHits.length >= 6) score += 1;
 
@@ -983,37 +1008,37 @@
     if (quoteCount >= 2 && anCount < 2) pEvidence -= 6;
     pEvidence = clamp(Math.round(pEvidence), 8, 98);
 
-    // 语言表达
-    var pLang = 72;
-    pLang -= Math.min(12, typoWords.length * 3);
-    pLang -= Math.min(3, Math.floor(epCount / 2));
-    pLang -= Math.min(8, netWords.length * 3);
-    pLang -= Math.min(6, runCount * 2);
-    if (ranhou >= 4) pLang -= 2;
-    if (wojuede >= 2) pLang -= 3;
-    if (deCount) pLang -= Math.min(3, deCount);
-    if (avgLen && avgLen < 8) pLang -= 3;
-    else if (avgLen > 45) pLang -= 4;
+    // 语言表达（容错提高：聚焦整体表达而非字词硬伤）
+    var pLang = 76;
+    pLang -= Math.min(4, typoWords.length * 0.8);
+    pLang -= Math.min(1, Math.floor(epCount / 3));
+    pLang -= Math.min(3, netWords.length * 1);
+    pLang -= Math.min(3, runCount * 1);
+    if (ranhou >= 4) pLang -= 1;
+    if (wojuede >= 2) pLang -= 2;
+    if (deCount) pLang -= Math.min(1, deCount);
+    if (avgLen && avgLen < 8) pLang -= 2;
+    else if (avgLen > 45) pLang -= 2;
     if (rhetoricCount >= 3) pLang += 6; else if (rhetoricCount >= 1) pLang += 3;
     if (idiomHits.length >= 6) pLang += 3;
     if (uniqueRatio >= 0.6) pLang += 3;
-    if (typoWords.length === 0 && epCount === 0 && deCount === 0 && chars > 200) pLang += 3;
+    if (typoWords.length === 0 && epCount === 0 && deCount === 0 && chars > 200) pLang += 2;
     pLang = clamp(Math.round(pLang), 8, 98);
 
     function dimComment(key, pct) {
       var map = {
         content: [
-          [85, '审题准确，概念清晰，思辨层层深入'],
-          [70, '能扣住题意并有一定思辨'],
-          [55, '立意基本符合，思辨深度不足'],
-          [40, '审题有偏差或论证单面'],
+          [85, '审题准确，概念清晰，思辨层层深入，有现实观照'],
+          [70, '能扣住题意，有一定思辨深度或广度'],
+          [55, '立意基本符合，但思辨深度/广度不足，对“为什么、在什么条件下”追问不够'],
+          [40, '审题有偏差或论证单面，缺少对对立面的回应'],
           [0, '偏题、套题或偷换概念']
         ],
         struct: [
-          [85, '层进式结构完整，论证环环相扣'],
-          [70, '结构清晰，有让步转折'],
-          [55, '结构基本完整，层次不够分明'],
-          [40, '段落失衡或论证平铺'],
+          [85, '层进式结构完整，段落之间是“让步—质疑—深化”的整体思辨推进'],
+          [70, '结构清晰，有让步转折，整体思辨逻辑成立'],
+          [55, '结构基本完整，但段落多为并列铺排，缺少层层深入的推进'],
+          [40, '段落失衡或论证平铺，整体思辨结构未展开'],
           [0, '结构混乱，不成篇章']
         ],
         evidence: [
@@ -1027,7 +1052,7 @@
           [85, '语言准确流畅，有论辩气势与文采'],
           [70, '语言通顺，偶有亮点'],
           [55, '基本通顺，表达偏平淡'],
-          [40, '病句、口语或硬伤较多'],
+          [40, '口语化表达偏多'],
           [0, '语言表达问题明显']
         ]
       };
@@ -1073,7 +1098,7 @@
     if (quoteCount >= 1) praises.push('恰当引用 ' + quoteCount + ' 处，增强了说理的文化底蕴');
     if (rhetoricCount >= 2) praises.push('综合运用比喻、反问、排比等修辞，语言有气势');
     if (idiomHits.length >= 5) praises.push('使用成语 ' + idiomHits.length + ' 个，书面语汇较丰富');
-    if (typoWords.length === 0 && epCount === 0 && deCount === 0 && chars > 300) praises.push('用字、标点规范，未见明显硬伤');
+    if (typoWords.length === 0 && epCount === 0 && deCount === 0 && chars > 300) praises.push('语言表达整体流畅，未见影响理解的硬伤');
     if (thesisN > 0) praises.push('立场明确，中心论点在文中清晰可见');
     if (!praises.length && chars >= 400) praises.push('能够围绕一个话题写完整篇文章，结构基本完整');
 
@@ -1088,14 +1113,14 @@
     if (sugArr.length < 2) {
       var weakest = dims.slice().sort(function (a, b) { return a.score - b.score; })[0];
       var fb = {
-        content: '审题立意还可加深：试着给材料中的核心概念下定义，并用“诚然……然而……”写出对立面的合理性与边界。',
-        struct: '论证层次可以更分明：按“引材料—概念界定—让步—质疑—深入—现实—收束”重排段落，每层一段。',
-        evidence: '论据要为论点服务：保留一个最贴切的事例，用“这说明……/之所以……是因为……”写出 2-3 句例后分析。',
-        lang: '语言再打磨：出声朗读一遍，删去多余的“然后、的、了”，把长句拆短，用词再肯定一些。'
+        content: '思辨深度可再挖一层：试着回答三个问题——这个观点在什么条件下成立？对立面在多大程度上有合理性？推到极端会怎样？把答案写成一段，思辨立刻深起来。',
+        struct: '论证层次可以更分明：按“引材料—概念界定—让步—质疑—深入—现实—收束”重排段落，每层一段，让整体思辨结构层层推进。',
+        evidence: '论据要为论点服务：保留一个最贴切的事例，用“这说明……/之所以……是因为……”写出 2-3 句例后分析，打通论据与论点。',
+        lang: '语言聚焦整体表达：出声朗读一遍，删去多余的“然后、的、了”，把长句拆短，确保每段的句群围绕一个分论点推进。'
       };
       sugArr.push({ level: 'tip', title: '提升建议', detail: fb[weakest.key] });
       if (sugArr.length < 2) {
-        sugArr.push({ level: 'tip', title: '冲击更高档', detail: '从三类到二类的关键是“辩证”，从二类到一类的关键是“条件分析与现实针对性”：观点在什么情境下成立、对当下的我们有何启示。' });
+        sugArr.push({ level: 'tip', title: '冲击更高档', detail: '从三类到二类的关键是“辩证”：承认对立面的合理性再质疑其边界；从二类到一类的关键是“条件分析与现实针对性”：观点在什么情境下成立、对当下的我们有何启示。' });
       }
     }
 
