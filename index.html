@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split7" />
+<link rel="stylesheet" href="styles.css?v=split8" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -71,11 +71,7 @@
       <div class="mode-switch" role="tablist">
         <button type="button" class="mode-opt active" id="mode-ai" data-mode="ai">
           <b>🤖 AI 智能批改</b>
-          <span>大模型逐句分析，建议更具体</span>
-        </button>
-        <button type="button" class="mode-opt" id="mode-local" data-mode="local">
-          <b>📐 本地规则批改</b>
-          <span>无需联网与密钥，即时出结果</span>
+          <span>大模型通读全文、整体评判，建议更具体</span>
         </button>
       </div>
       <p class="ai-hint" id="ai-hint"></p>
@@ -178,7 +174,6 @@
         <div class="ge-actions">
           <button type="button" class="btn btn-ghost" id="ge-back">返回修改</button>
           <button type="button" class="btn btn-primary" id="ge-retry-ai">重试 AI 批改</button>
-          <button type="button" class="btn btn-ghost" id="ge-fallback">改用本地规则批改</button>
         </div>
       </div>
     </div>
@@ -283,7 +278,7 @@
 </main>
 
 <footer class="site-footer">
-  <p id="footer-note">评分细则依据 2025 上海高三多区一模阅卷反馈提炼（五类档整体赋分，满分 70 分）。本地规则批改在浏览器内运行；AI 批改经本机 127.0.0.1 后端转发至你配置的大模型，请妥善保管 API Key。</p>
+  <p id="footer-note">评分以 AI 大模型通读全文后的整体评判为准（上海卷五类档整体赋分，满分 70 分），聚焦审题、思辨深度与论证质量，不考核错别字、标点等字词细节。AI 批改经本机 127.0.0.1 后端转发至你配置的大模型，请妥善保管 API Key。</p>
 </footer>
 
 <!-- AI 设置弹窗 -->
@@ -324,9 +319,9 @@
   </div>
 </div>
 
-<script src="js/file-upload.js?v=split7"></script>
-<script src="js/engine.js?v=split7"></script>
-<script src="js/ai-client.js?v=split7"></script>
-<script src="js/app.js?v=split7"></script>
+<script src="js/file-upload.js?v=split8"></script>
+<script src="js/engine.js?v=split8"></script>
+<script src="js/ai-client.js?v=split8"></script>
+<script src="js/app.js?v=split8"></script>
 </body>
 </html>

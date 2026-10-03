@@ -1,6 +1,6 @@
 /* ============================================================
  * 交互流程：题目审题 → 写作文 → 等待批改 → 分档报告与建议
- * 两种批改方式：AI 大模型（经本机后端）/ 本地规则引擎（兜底）
+ * 批改方式：AI 大模型（经本机后端），整体评判
  * 上海高考思辨议论文 · 满分 70 分 · 五类档
  * ============================================================ */
 (function () {
@@ -75,13 +75,6 @@
       '所以说，细节真的非常非常重要。我们做任何事情都要注意细节，上课要注意细节，写作业要注意细节，考试的时候更要注意细节。只有注意细节，才能取得最后的成功。在生活中，我们要从身边的小事做起，认认真真对待每一个细节，不马虎，不粗心，把注重细节当成一种习惯，坚持下去就一定会有收获！！！'
   };
 
-  var LOCAL_STEPS = [
-    '通读全文，梳理论证脉络',
-    '核查字数、标题与段落结构',
-    '检测概念界定、让步转折与以例代证',
-    '比对题目材料，判断审题契合度',
-    '按五类档整体赋分并生成建议'
-  ];
   var AI_STEPS = [
     'AI 逐词批注题目材料，核查审题',
     'AI 通读全文，把握中心论点与分档',
@@ -265,47 +258,35 @@
   });
   history.replaceState({ step: 1 }, '');
 
-  /* ---------- 批改方式切换 ---------- */
-  function currentMode() { return EssayAI.getMode(); }
+  /* ---------- 批改方式（仅 AI 批改） ---------- */
+  function currentMode() { return 'ai'; }
 
   function refreshModeUI() {
-    var ai = currentMode() === 'ai';
-    $('mode-ai').classList.toggle('active', ai);
-    $('mode-local').classList.toggle('active', !ai);
     var badge = $('mode-badge');
-    if (ai) {
-      badge.textContent = '🤖 AI 模式';
-      badge.className = 'mode-badge mode-ai';
-    } else {
-      badge.textContent = '📐 本地模式';
-      badge.className = 'mode-badge mode-local';
-    }
+    badge.textContent = '🤖 AI 模式';
+    badge.className = 'mode-badge mode-ai';
+    var localBtn = $('mode-local');
+    if (localBtn && localBtn.parentNode) localBtn.parentNode.removeChild(localBtn);
     refreshHint();
   }
 
   function refreshHint() {
     var hint = $('ai-hint');
-    if (currentMode() !== 'ai') {
-      hint.textContent = '当前为本地规则批改：无需联网与密钥，按上海五类档规则即时出结果；审题指导同样可用（本地粗提取）。';
-      hint.className = 'ai-hint local';
-      return;
-    }
     var hasBrowserKey = !!(EssayAI.getSettings().apiKey);
     if (hasBrowserKey) {
       hint.innerHTML = '将使用浏览器中保存的 Key 调用 <b>' + escapeHtml(EssayAI.getSettings().model || 'AI 模型') +
-        '</b>，作文与题目经本机后端转发给大模型，按上海卷 70 分标准批改。';
+        '</b>，作文与题目经本机后端转发给大模型，按上海卷 70 分标准整体评判。';
       hint.className = 'ai-hint ai-ok';
     } else if (serverCfg && serverCfg.configured) {
       hint.innerHTML = '已检测到服务器 .env 配置，将使用 <b>' + escapeHtml(serverCfg.model) + '</b> 进行 AI 批改。';
       hint.className = 'ai-hint ai-ok';
     } else {
-      hint.innerHTML = '尚未配置 API Key —— 可直接使用本地规则批改；或点击右上角 <b>⚙ AI 设置</b> 配置后使用大模型。';
+      hint.innerHTML = '尚未配置 API Key —— 点击右上角 <b>⚙ AI 设置</b> 配置后即可使用大模型批改。';
       hint.className = 'ai-hint ai-warn';
     }
   }
 
   $('mode-ai').addEventListener('click', function () { EssayAI.setMode('ai'); refreshModeUI(); });
-  $('mode-local').addEventListener('click', function () { EssayAI.setMode('local'); refreshModeUI(); });
 
   /* ---------- 审题 ---------- */
   function runAnalyze() {
@@ -409,29 +390,14 @@
         prompt: promptEl.value.trim()
       }
     };
-    if (currentMode() === 'local') {
-      runLocal();
-    } else {
-      var s = EssayAI.getSettings();
-      if (!s.apiKey && !(serverCfg && serverCfg.configured)) {
-        openSettings('AI 模式需要先配置 API Key。填写后即可使用；也可以先改用本地规则批改。');
-        return;
-      }
-      runAI();
+    // 仅 AI 批改：未配置 Key 时提示去设置
+    var s = EssayAI.getSettings();
+    if (!s.apiKey && !(serverCfg && serverCfg.configured)) {
+      openSettings('AI 批改需要先配置 API Key。填写后即可使用大模型整体评判。');
+      return;
     }
+    runAI();
   });
-
-  function runLocal() {
-    showStep(2);
-    hideGradeError();
-    startGrading(LOCAL_STEPS, function (done) {
-      var report = EssayEngine.grade(lastSubmit.text, lastSubmit.opts);
-      report.engine = 'local';
-      setTimeout(function () {
-        done(function () { renderReport(report, lastSubmit.text); showStep(3, true); });
-      }, 300);
-    }, function (proceed, err) { if (err) showGradeError(err); else proceed(); });
-  }
 
   function runAI() {
     showStep(2);
@@ -532,12 +498,6 @@
 
   $('ge-back').addEventListener('click', function () { hideGradeError(); showStep(1); });
   $('ge-retry-ai').addEventListener('click', function () { hideGradeError(); runAI(); });
-  $('ge-fallback').addEventListener('click', function () {
-    hideGradeError();
-    EssayAI.setMode('local');
-    refreshModeUI();
-    runLocal();
-  });
 
   /* ---------- 渲染报告（70 分制） ---------- */
   function renderReport(r, rawText) {
@@ -556,10 +516,10 @@
     var engineBadge = $('engine-badge');
     if (r.engine === 'ai') {
       engineBadge.textContent = '🤖 AI 批改' + (r.model ? ' · ' + r.model : '');
+      engineBadge.style.display = '';
     } else {
-      engineBadge.textContent = '📐 本地规则批改';
+      engineBadge.style.display = 'none';
     }
-    engineBadge.style.display = '';
 
     $('report-title').textContent = r.title ? '《' + r.title + '》批改报告' : '作文批改报告';
     $('report-summary').textContent = r.summary;
