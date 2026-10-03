@@ -572,10 +572,13 @@
 
   // 审题分析提纲的痕迹（作文开头几段不应出现）
   var RE_OUTLINE_MARK = /^\s*[①②③④⑤⑥⑦⑧⑨⑩]|[【\[](?:原因剖析|结果剖析|写作思路|审题|立意|提纲)/;
-  // 题干里不会出现的词：论证推进词 + 教师分析文件的元话语
-  // 一旦"题目侧"含这些词，说明切点落进了作文正文或阅卷分析文档
-  var RE_PROMPT_POLLUTION =
-    /诚然|固然|然而|但是|因此|所以说|首先|其次|再者|反观当下|依我之见|在我看来|笔者认为|本质上|进一步分析|究其根本|由此可见|毋庸讳言|究其原因|换言之|文题解析|审题指导|审题立意|写作反馈|阅卷(?:反馈|情况|总结|分析|组)?|评分(?:说明|标准|细则)?|参考答案?|题意分析|立意分析|典型(?:问题|错误|卷例)|考点|关键概念|构思详解|试题分析|深度解析|【=|批注|旁批/;
+  // 题干强污染：教师分析文档的元话语，任何情况下都不该出现在题干里
+  var RE_PROMPT_POLLUTION_STRONG =
+    /文题解析|审题指导|审题立意|写作反馈|阅卷(?:反馈|情况|总结|分析|组)?|评分(?:说明|标准|细则)?|参考答案?|题意分析|立意分析|典型(?:问题|错误|卷例)|考点分析|关键概念|构思详解|试题分析|深度解析|【=|批注|旁批/;
+  // 题干弱污染：论证连接词。材料本身的叙述完全可能包含（如"有人因此怀疑……"
+  // "但也有人认为……"），只有大量出现（≥3 类）才说明切点落进了作文正文
+  var RE_PROMPT_POLLUTION_MILD =
+    /诚然|固然|然而|但是|因此|所以说|首先|其次|再者|反观当下|依我之见|在我看来|笔者认为|本质上|进一步分析|究其根本|由此可见|毋庸讳言|究其原因|换言之/g;
   // 材料正文的强信号（用于定位材料起始、剥离试卷抬头）
   function looksLikeMaterialLine(p) {
     return RE_TASK.test(p) || RE_REQ_STRONG.test(p) || RE_LEAD.test(p) || RE_DUAL_VIEW.test(p);
@@ -615,8 +618,13 @@
       var promptFirst = cleanPromptParas[0] || '';
       var pScore = scorePrompt(promptText, promptFirst, hasTag);
       if (pScore < 4) continue;
-      // 题干纯度：题干是中性叙述+任务句，不应含论证推进词
-      if (RE_PROMPT_POLLUTION.test(promptText)) continue;
+      // 题干纯度：教师元话语（强污染）一票否决；论证连接词（弱污染）按密度判断——
+      // 材料叙述天然可能含少量连接词，≥3 类才说明切点落进了作文正文
+      if (RE_PROMPT_POLLUTION_STRONG.test(promptText)) continue;
+      var mildArr = promptText.match(RE_PROMPT_POLLUTION_MILD) || [];
+      var mildSet = {};
+      mildArr.forEach(function (w) { mildSet[w] = 1; });
+      if (Object.keys(mildSet).length >= 3) continue;
 
       var info = scoreEssay(paras.slice(i));
       if (info.score < 6) continue;
