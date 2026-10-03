@@ -503,6 +503,10 @@ textarea {
   border-color: #a7f3d0; background: linear-gradient(90deg, var(--green-bg), #fff 55%);
   box-shadow: 0 0 0 3px rgba(5, 150, 105, .08);
 }
+.ar-angle .al-name {
+  display: block; font-size: 13px; font-weight: 700; color: var(--ink-2);
+  margin-bottom: 6px; letter-spacing: 0.2px;
+}
 .ar-angle .al-level {
   display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 10px;
   border-radius: 999px; margin-bottom: 6px;
@@ -511,6 +515,13 @@ textarea {
 .ar-angle.best .al-level { color: #065f46; background: var(--green-bg); border-color: #a7f3d0; }
 .ar-angle .al-stand { font-weight: 600; color: var(--ink); display: block; margin-bottom: 3px; }
 .ar-angle .al-eval { font-size: 13px; color: var(--ink-2); }
+.ar-angle .al-chain {
+  margin: 8px 0 6px; padding: 8px 12px 8px 30px; background: #f8fafc;
+  border-left: 3px solid #94a3b8; border-radius: 0 8px 8px 0; font-size: 13px;
+  color: var(--ink-2); line-height: 1.7;
+}
+.ar-angle .al-chain li { margin-bottom: 3px; position: relative; }
+.ar-angle .al-chain li:last-child { margin-bottom: 0; }
 .ar-outline { list-style: none; counter-reset: olstep; display: flex; flex-direction: column; gap: 6px; }
 .ar-outline li {
   position: relative; padding: 8px 12px 8px 40px; background: #fff;

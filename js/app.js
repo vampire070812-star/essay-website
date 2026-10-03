@@ -334,9 +334,17 @@
 
     var angles = arr(r.angles).map(function (a, i) {
       var best = /一类|一类立意/.test(String(a.level)) || i === arr(r.angles).length - 1;
+      var chain = '';
+      if (Array.isArray(a.logicChain) && a.logicChain.length) {
+        chain = '<ol class="al-chain">' + a.logicChain.map(function (s) {
+          return '<li>' + str(s, 200) + '</li>';
+        }).join('') + '</ol>';
+      }
       return '<div class="ar-angle' + (best ? ' best' : '') + '">' +
+        '<span class="al-name">' + str(a.name, 40) + '</span>' +
         '<span class="al-level">' + str(a.level, 30) + '</span>' +
         '<span class="al-stand">' + str(a.stand, 260) + '</span>' +
+        chain +
         '<span class="al-eval">' + str(a.evaluation, 300) + '</span></div>';
     }).join('');
 
