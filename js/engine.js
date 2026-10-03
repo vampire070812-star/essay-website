@@ -270,12 +270,8 @@
     var deCount = 0, dm;
     while ((dm = deRe.exec(text))) {
       deCount++;
-      addMark(dm.index + dm[0].length - 1, dm.index + dm[0].length, 'mk-error', '这里应该用“地”：修饰动词用“地”', 0);
     }
-    if (deCount >= 2) {
-      addSug('dede', 'warn', '注意“的、地、得”（共 ' + deCount + ' 处）',
-        '上传/OCR 识别可能产生误差，若是原文笔误请注意：名词前用“的”，动词前用“地”，动词后补语前用“得”。考场阅卷以段落整体为单位，个别混用不影响大局。');
-    }
+    // 注：本系统不考核错别字/的地得等字词级问题，仅统计数量用于“表达流畅”加分判断
 
     // 错别字
     var wordTypos = [
@@ -292,56 +288,30 @@
       [/纯感/g, '注意：材料若是“钝感”，不要写成“纯感”']
     ];
     var typoWords = [];
-    var typoShown = 0;
     wordTypos.forEach(function (pair) {
       var m;
       while ((m = pair[0].exec(text))) {
-        if (typoShown < 3) {
-          addMark(m.index, m.index + m[0].length, 'mk-error', '应为“' + pair[1] + '”（若系识别误差请以原文为准）', 0);
-          typoShown++;
-        }
         typoWords.push('“' + m[0] + '”→“' + pair[1] + '”');
       }
     });
-    var dupRe = /(的的|了了|是是|就就|和和|都都|也也|很很|会会|不不不)/g, dpm, dupShown = 0;
+    var dupRe = /(的的|了了|是是|就就|和和|都都|也也|很很|会会|不不不)/g, dpm;
     while ((dpm = dupRe.exec(text))) {
-      if (dupShown < 2) {
-        addMark(dpm.index, dpm.index + dpm[0].length, 'mk-error', '疑似重复输入（若系识别误差请以原文为准）', 0);
-        dupShown++;
-      }
       if (typoWords.indexOf('“' + dpm[0] + '”重复') < 0) typoWords.push('“' + dpm[0] + '”重复');
     }
-    var repRe = /(然后|就是|因为|所以|那个|这个|于是|而且|并且){2,}/g, rpm, repShown = 0;
+    var repRe = /(然后|就是|因为|所以|那个|这个|于是|而且|并且){2,}/g, rpm;
     while ((rpm = repRe.exec(text))) {
-      if (repShown < 2) {
-        addMark(rpm.index, rpm.index + rpm[0].length, 'mk-error', '词语重复，删去一个', 0);
-        repShown++;
-      }
       if (typoWords.indexOf('“' + rpm[0].slice(0, 2) + '”重复') < 0) typoWords.push('“' + rpm[0].slice(0, 2) + '”重复');
     }
-    if (typoWords.length) {
-      addSug('typo', 'warn', '疑似错别字/识别误差 ' + typoWords.length + ' 处',
-        '文中发现：' + uniq(typoWords).slice(0, 6).join('、') + '。上传/OCR 识别可能出错，请以原文为准；考场阅卷快速扫读，重点关注段落整体与思辨逻辑，个别字词偏差不影响大局。');
-    }
+    // 注：本系统不考核错别字，不标注、不扣分，仅统计数量用于“表达流畅”加分判断
 
-    // 英文标点（宽容处理：上传/OCR 常见误差，仅提示不计硬伤）
+    // 英文标点（不考核：仅统计数量，不标注不扣分）
     var epRe = /[A-Za-z一-龥][,.!?;:]|[,.!?;:][A-Za-z一-龥]/g, epm, epCount = 0;
     while ((epm = epRe.exec(text))) {
-      var pi = /[,.!?;:]/.test(epm[0][0]) ? epm.index : epm.index + 1;
       epCount++;
-      if (epCount <= 2) addMark(pi, pi + 1, 'mk-warn', '应为全角标点（上传识别常见误差，请以原文为准）', 1);
-    }
-    if (epCount) {
-      addSug('enpunct', 'warn', '个别标点疑似英文半角（共 ' + epCount + ' 处）',
-        '上传/OCR 常把全角标点识别成半角，请以原文为准。考场阅卷关注段落整体，个别标点偏差不影响大局。');
     }
 
-    // 标点连用（宽容：最多提示 2 处，不单独生成建议卡）
+    // 标点连用（不考核：跳过）
     var ppRe = /[，。！？、；：,]{2,}/g, ppm, ppCount = 0;
-    while ((ppm = ppRe.exec(text)) && ppCount < 2) {
-      ppCount++;
-      addMark(ppm.index, ppm.index + ppm[0].length, 'mk-warn', '标点重复（若系识别误差请忽略）', 1);
-    }
     while ((ppm = ppRe.exec(text))) ppCount++;
 
     // 长句
@@ -438,10 +408,7 @@
       if (cjkLen(first) >= 2 && cjkLen(first) <= 16 && !/[。！？，；…!?]/.test(first)) titleLine = true;
     }
     var hasTitle = !!(title || titleLine);
-    if (type === '议论文' && chars >= 600 && !hasTitle) {
-      addSug('notitle', 'error', '疑似漏拟题目',
-        '上海高考要求“自拟题目”，官方评分细则明确规定未写题目扣 2 分。好标题可以直接亮出核心观点，如“常识不应成为常态”。');
-    }
+    // 注：本系统不要求标题，未写题目不扣分、不提醒
 
     // 首尾呼应
     var echoShared = [];
@@ -1030,18 +997,14 @@
     if (noveltyHits.length >= 2) score += 2; else if (noveltyHits.length >= 1) score += 1;
     // 文学性表达（官方一类卷标准："有文采"，与思辨兼备时计分）
     if (rhetoricCount >= 2 && uniq(litHits).length >= 2) score += 2;
-    // 官方细则：未写题目扣 2 分
-    if (!hasTitle && chars >= 600) score -= 2;
+    // 注：不考核错别字/标点/标题，不设相关扣分
 
-    // 语言（容错提高：错别字/标点大幅降权，聚焦整体表达与思辨）
-    score -= Math.min(2, Math.round(typoWords.length * 0.5));
-    score -= Math.min(1, Math.floor(epCount / 3));
+    // 语言（不考核错别字/标点；仅整体表达层面：网络用语、长句、语气词）
     score -= Math.min(2, netWords.length * 0.8);
     score -= Math.min(2, Math.floor(runCount / 2));
     if (avgLen && avgLen < 8) score -= 1;
     else if (avgLen > 45) score -= 1;
     if (ranhou >= 4) score -= 1;
-    if (deCount) score -= Math.min(1, deCount);
     if (rhetoricCount >= 3) score += 2; else if (rhetoricCount >= 1) score += 1;
     if (idiomHits.length >= 6) score += 1;
 
@@ -1114,15 +1077,12 @@
     if (quoteCount >= 2 && anCount < 2) pEvidence -= 6;
     pEvidence = clamp(Math.round(pEvidence), 8, 98);
 
-    // 语言表达（容错提高：聚焦整体表达而非字词硬伤）
-    var pLang = 76;
-    pLang -= Math.min(4, typoWords.length * 0.8);
-    pLang -= Math.min(1, Math.floor(epCount / 3));
+    // 语言表达（不考核错别字/标点/标题；聚焦整体表达：词汇、修辞、句式）
+    var pLang = 78;
     pLang -= Math.min(3, netWords.length * 1);
     pLang -= Math.min(3, runCount * 1);
     if (ranhou >= 4) pLang -= 1;
     if (wojuede >= 2) pLang -= 2;
-    if (deCount) pLang -= Math.min(1, deCount);
     if (avgLen && avgLen < 8) pLang -= 2;
     else if (avgLen > 45) pLang -= 2;
     if (rhetoricCount >= 3) pLang += 6; else if (rhetoricCount >= 1) pLang += 3;
