@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: essay-grader
+    runtime: python
+    plan: free
+    buildCommand: python --version
+    startCommand: python server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
