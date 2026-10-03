@@ -9,33 +9,70 @@
 (function () {
   'use strict';
 
+  // 国内优先的 npm 镜像（阿里 npmmirror）+ jsDelivr 国内镜像 + 官方源，逐个兜底
+  var NPM = 'https://registry.npmmirror.com';
+
   // 各库提供多个 CDN 源，前一个失败自动尝试下一个（兼顾国内网络）
   var LIBS = {
     mammoth: [
+      NPM + '/mammoth/1.6.0/files/mammoth.browser.min.js',
+      'https://cdn.jsdmirror.com/npm/mammoth@1.6.0/mammoth.browser.min.js',
+      'https://fastly.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js',
       'https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js',
-      'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js',
       'https://unpkg.com/mammoth@1.6.0/mammoth.browser.min.js'
     ],
     pdfjs: [
+      NPM + '/pdfjs-dist/3.11.174/files/legacy/build/pdf.min.js',
+      'https://cdn.jsdmirror.com/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js',
+      'https://fastly.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js',
       'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js',
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-      'https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.min.js'
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
     ],
     tesseract: [
+      NPM + '/tesseract.js/5.1.1/files/dist/tesseract.min.js',
+      'https://cdn.jsdmirror.com/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+      'https://fastly.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
       'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
       'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js',
       'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js'
     ]
   };
 
-  // 解析库需要的配套资源（worker / 核心 / 语言包）
+  // PDF worker 多源（与主库同源优先）
   var PDF_WORKERS = [
+    NPM + '/pdfjs-dist/3.11.174/files/legacy/build/pdf.worker.min.js',
+    'https://cdn.jsdmirror.com/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js',
+    'https://fastly.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js',
     'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
   ];
-  var TESS_WORKER = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js';
-  var TESS_CORE = 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1';
-  var TESS_LANG = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0';
+
+  // OCR 三类资源候选源：使用时先做小流量竞速探测，选最快可达的一条
+  // 语言包优先用 best_int 轻量模型（约 1.7MB，打印体识别质量足够），
+  // 官方 20MB 标准版仅作最后兜底
+  var TESS_WORKERS = [
+    NPM + '/tesseract.js/5.1.1/files/dist/worker.min.js',
+    'https://cdn.jsdmirror.com/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    'https://fastly.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    'https://unpkg.com/tesseract.js@5.1.1/dist/worker.min.js'
+  ];
+  // corePath 给目录，tesseract 会自动拼 tesseract-core-simd.wasm.js
+  var TESS_CORES = [
+    NPM + '/tesseract.js-core/5.1.1/files',
+    'https://cdn.jsdmirror.com/npm/tesseract.js-core@5.1.1',
+    'https://fastly.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    'https://unpkg.com/tesseract.js-core@5.1.1'
+  ];
+  var TESS_LANGS = [
+    'https://cdn.jsdmirror.com/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int',
+    'https://fastly.jsdelivr.net/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int',
+    'https://cdn.jsdelivr.net/npm/@tesseract.js-data/chi_sim@1.0.0/4.0.0_best_int',
+    'https://ghproxy.net/https://raw.githubusercontent.com/naptha/tessdata/gh-pages/4.0.0_best_int',
+    'https://raw.githubusercontent.com/naptha/tessdata/gh-pages/4.0.0_best_int',
+    'https://tessdata.projectnaptha.com/4.0.0'
+  ];
 
   var MAX_DOC_MB = 20;   // 文档类（docx/pdf/txt）
   var MAX_IMG_MB = 15;   // 图片 OCR
@@ -116,11 +153,16 @@
 
   /* ---------- PDF：pdf.js 按页提取，按纵坐标还原换行/分段 ---------- */
   function parsePdf(file, report) {
+    var workerSrc = '';
     return loadScript(LIBS.pdfjs, 'pdfjsLib').then(function () {
       var pdfjs = window.pdfjsLib;
       if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-        pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKERS[0];
+        return pickFastest(PDF_WORKERS, '').then(function (src) {
+          workerSrc = src || PDF_WORKERS[0];
+          pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+        });
       }
+    }).then(function () {
       return file.arrayBuffer();
     }).then(function (buf) {
       var task = window.pdfjsLib.getDocument({ data: buf });
@@ -197,25 +239,131 @@
     return paras.join('\n\n');
   }
 
-  /* ---------- 图片 OCR：tesseract.js（中文简体） ---------- */
-  function parseImage(file, report) {
-    return loadScript(LIBS.tesseract, 'Tesseract').then(function () {
-      report({ status: '正在加载中文识别模型（首次约数 MB，请稍候）', ratio: 0.02 });
-      return window.Tesseract.createWorker('chi_sim', 1, {
-        workerPath: TESS_WORKER,
-        corePath: TESS_CORE,
-        langPath: TESS_LANG,
-        logger: function (m) {
-          if (m.status === 'recognizing text') {
-            report({ status: '正在逐行识别图片文字', ratio: Math.max(0.05, m.progress || 0) });
-          }
-        }
+  /* ---------- CDN 竞速：小流量探测，返回最快可达的基址 ---------- */
+  function reachable(fileUrl) {
+    return new Promise(function (resolve) {
+      var ctrl = null, finished = false;
+      try { ctrl = new AbortController(); } catch (e) {}
+      var timer = setTimeout(function () {
+        finished = true;
+        try { ctrl && ctrl.abort(); } catch (e) {}
+        resolve(false);
+      }, 9000);
+      fetch(fileUrl, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-2047' },
+        signal: ctrl ? ctrl.signal : undefined,
+        mode: 'cors',
+        cache: 'no-store'
+      }).then(function (r) {
+        if (finished) return;
+        clearTimeout(timer); finished = true;
+        resolve(r.status === 200 || r.status === 206);
+      }).catch(function () {
+        if (finished) return;
+        clearTimeout(timer); finished = true;
+        resolve(false);
       });
+    });
+  }
+
+  // bases：候选基址数组；fileRel：需探测的文件名（base 本身就是完整文件时传 ''）
+  function pickFastest(bases, fileRel) {
+    return new Promise(function (resolve) {
+      var done = false, remaining = bases.length;
+      bases.forEach(function (base) {
+        var url = fileRel ? base.replace(/\/$/, '') + '/' + fileRel : base;
+        reachable(url).then(function (ok) {
+          if (done) return;
+          if (ok) { done = true; resolve(base); }
+          else {
+            remaining--;
+            if (remaining === 0) resolve(null);
+          }
+        });
+      });
+    });
+  }
+
+  // OCR 任务句柄（供取消时 terminate）
+  var activeWorker = null;
+  function cancelOcr() {
+    if (activeWorker) {
+      try { activeWorker.terminate(); } catch (e) {}
+      activeWorker = null;
+    }
+  }
+
+  // OCR 各阶段 → 进度映射，让用户看到真实进展而不是卡死
+  function ocrProgress(m, report) {
+    var s = String(m && m.status || '');
+    var p = +(m && m.progress) || 0;
+    if (s.indexOf('loading tesseract core') >= 0) {
+      report({ status: '正在加载识别核心组件…', ratio: 0.06 });
+    } else if (s.indexOf('initializing tesseract') >= 0) {
+      report({ status: '正在初始化识别引擎…', ratio: 0.10 });
+    } else if (s.indexOf('loading language traineddata') >= 0) {
+      report({
+        status: '正在下载中文识别模型（约 1.7MB，仅首次）' + (p > 0 ? '　' + Math.round(p * 100) + '%' : ''),
+        ratio: 0.12 + 0.55 * p
+      });
+    } else if (s.indexOf('loaded language traineddata') >= 0) {
+      report({ status: '中文模型就绪', ratio: 0.70 });
+    } else if (s.indexOf('initializing api') >= 0) {
+      report({ status: '正在装载识别词典…', ratio: 0.74 });
+    } else if (s.indexOf('recognizing text') >= 0) {
+      report({ status: '正在逐行识别图片文字　' + Math.round(p * 100) + '%', ratio: 0.80 + 0.19 * p });
+    }
+  }
+
+  /* ---------- 图片 OCR：tesseract.js（中文简体，多源 + 看门狗） ---------- */
+  function parseImage(file, report) {
+    var lastBeat = Date.now();
+    var watchTimer = null;
+
+    return loadScript(LIBS.tesseract, 'Tesseract').then(function () {
+      report({ status: '正在检测最快的识别模型下载线路…', ratio: 0.03 });
+      return Promise.all([
+        pickFastest(TESS_WORKERS, ''),
+        pickFastest(TESS_CORES, 'tesseract-core-simd.wasm.js'),
+        pickFastest(TESS_LANGS, 'chi_sim.traineddata.gz')
+      ]);
+    }).then(function (picked) {
+      var workerPath = picked[0], corePath = picked[1], langPath = picked[2];
+      if (!workerPath || !corePath || !langPath) {
+        throw new Error('所有识别模型下载线路都无法连通。请切换网络（WiFi 与 4G 互换）后重试；或改用 Word/PDF 文件、直接粘贴文字。');
+      }
+      var isLite = /best_int|gh-pages/.test(langPath);
+      report({
+        status: '正在下载中文识别模型（' + (isLite ? '约 1.7MB 轻量版' : '约 20MB 标准版') + '，仅首次，之后自动缓存）',
+        ratio: 0.05
+      });
+
+      var createPromise = window.Tesseract.createWorker('chi_sim', 1, {
+        workerPath: workerPath,
+        corePath: corePath,
+        langPath: langPath,
+        gzip: true,
+        logger: function (m) { lastBeat = Date.now(); ocrProgress(m, report); }
+      }).then(function (worker) { activeWorker = worker; return worker; });
+
+      // 看门狗：90 秒没有任何阶段进展即判定网络卡死
+      var guard = new Promise(function (_, reject) {
+        watchTimer = setInterval(function () {
+          if (Date.now() - lastBeat > 90000) {
+            clearInterval(watchTimer);
+            reject(new Error('识别模型下载长时间没有进展（当前网络过慢或受限）。建议：① 切换 WiFi/4G 后点重试；② 轻量模型仍失败时改用 Word/PDF 或直接粘贴文字。'));
+          }
+        }, 5000);
+        createPromise.then(function () { clearInterval(watchTimer); }, function () { clearInterval(watchTimer); });
+      });
+
+      return Promise.race([createPromise, guard]);
     }).then(function (worker) {
       return worker.recognize(file).then(function (ret) {
-        return worker.terminate().then(function () { return ret; });
+        return worker.terminate().then(function () { activeWorker = null; return ret; });
       }, function (err) {
-        return worker.terminate().then(function () { throw err; });
+        return worker.terminate().then(function () { activeWorker = null; throw err; });
       });
     }).then(function (ret) {
       var text = ocrPostProcess(ret.data && ret.data.text ? ret.data.text : '');
@@ -415,6 +563,7 @@
   window.EssayFile = {
     extract: extract,
     splitDocument: splitDocument,
+    cancelOcr: cancelOcr,
     supported: '.txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp',
     guessTitle: guessTitle
   };

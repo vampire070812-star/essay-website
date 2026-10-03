@@ -165,6 +165,7 @@
 
   function resetUploadUI() {
     uploadSeq++;
+    if (window.EssayFile && EssayFile.cancelOcr) EssayFile.cancelOcr();
     upBox.hidden = true;
     upBox.classList.remove('ok', 'error');
     upZone.classList.remove('busy');
