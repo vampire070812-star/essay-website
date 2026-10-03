@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>作文批改 · 智能评分与修改建议</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-logo">📝</span>
+      <div>
+        <h1>高考思辨议论文批改</h1>
+        <p>上海卷 70 分五类档 · AI 审题指导 · 逐句批注</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="mode-badge mode-ai" id="mode-badge">🤖 AI 模式</span>
+      <button type="button" class="btn-settings" id="btn-settings">⚙ AI 设置</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- 步骤指示器 -->
+  <ol class="stepper" id="stepper">
+    <li class="step active" data-step="1">
+      <span class="step-dot">1</span>
+      <span class="step-label">审题与写作</span>
+    </li>
+    <li class="step" data-step="2">
+      <span class="step-dot">2</span>
+      <span class="step-label">等待批改</span>
+    </li>
+    <li class="step" data-step="3">
+      <span class="step-dot">3</span>
+      <span class="step-label">分档与建议</span>
+    </li>
+  </ol>
+
+  <!-- 模块一：审题与作文 -->
+  <section class="panel active" id="panel-input">
+
+    <!-- 第 0 步：作文题目（材料）审题 -->
+    <div class="card prompt-card">
+      <h2 class="card-title"><span class="title-bar"></span>第一步：粘贴作文题目（材料），先审题</h2>
+      <div class="prompt-toolbar">
+        <select id="exam-prompt-select" class="exam-select">
+          <option value="">— 选择 2025 上海高三一模真题练习 —</option>
+        </select>
+        <button type="button" class="btn btn-analyze" id="btn-analyze">🔍 AI 审题指导</button>
+      </div>
+      <div class="field">
+        <textarea id="essay-prompt" rows="4"
+          placeholder="粘贴或输入试卷上的作文题目材料，如：人们常说细节决定成败，可也有人认为，不受细节影响的钝感才是生活中最宝贵的才能……&#10;（不填也可以直接批改作文，但填写后系统能判断是否偏题、有无偷换概念）"></textarea>
+      </div>
+      <p class="analyze-hint" id="analyze-hint"></p>
+
+      <!-- 审题结果 -->
+      <div class="analyze-result" id="analyze-result" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title"><span class="title-bar"></span>提交你的作文</h2>
+
+      <div class="mode-switch" role="tablist">
+        <button type="button" class="mode-opt active" id="mode-ai" data-mode="ai">
+          <b>🤖 AI 智能批改</b>
+          <span>大模型逐句分析，建议更具体</span>
+        </button>
+        <button type="button" class="mode-opt" id="mode-local" data-mode="local">
+          <b>📐 本地规则批改</b>
+          <span>无需联网与密钥，即时出结果</span>
+        </button>
+      </div>
+      <p class="ai-hint" id="ai-hint"></p>
+
+      <div class="form-row">
+        <div class="field field-title">
+          <label for="essay-title">自拟标题</label>
+          <input type="text" id="essay-title" maxlength="40" placeholder="选填，如：常识不应成为常态" />
+        </div>
+        <div class="field field-type">
+          <label for="essay-type">文体</label>
+          <select id="essay-type">
+            <option value="议论文" selected>议论文</option>
+            <option value="记叙文">记叙文</option>
+            <option value="说明文">说明文</option>
+            <option value="散文">散文</option>
+            <option value="应用文">应用文</option>
+          </select>
+        </div>
+        <div class="field field-target">
+          <label for="essay-target">字数要求</label>
+          <select id="essay-target">
+            <option value="600">600 字</option>
+            <option value="800" selected>800 字（高考）</option>
+            <option value="1000">1000 字</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="essay-text">作文正文</label>
+        <textarea id="essay-text" rows="14"
+          placeholder="在这里粘贴或输入你的作文（不少于 800 字）……&#10;系统按上海卷五类档整体赋分，从审题立意、论证层次、论据分析、语言表达四个维度诊断，标出概念界定、让步转折、以例代证、错别字病句等批注。"></textarea>
+        <div class="text-bar">
+          <span class="char-count"><b id="char-count">0</b> 字（高考要求不少于 800 字）</span>
+          <span class="sample-hint">没有作文？试试 →
+            <button type="button" class="link-btn" id="load-sample-1">60 分范文</button>
+            <button type="button" class="link-btn" id="load-sample-2">跑题反例</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="btn-clear">清空</button>
+        <button type="button" class="btn btn-primary" id="btn-submit">开始批改 →</button>
+      </div>
+      <p class="form-tip" id="form-tip"></p>
+    </div>
+  </section>
+
+  <!-- 模块二：等待批改 -->
+  <section class="panel" id="panel-grading">
+    <div class="card grading-card">
+      <div class="grading-anim">
+        <div class="pen-float">✍️</div>
+        <div class="paper-lines">
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <h2>老师正在批改中……</h2>
+      <p class="grading-sub" id="grading-status">通读全文，梳理文章脉络</p>
+
+      <ul class="grade-steps" id="grade-steps">
+        <li><i class="gs-icon">◌</i>通读全文，梳理脉络</li>
+        <li><i class="gs-icon">◌</i>核查字数与段落结构</li>
+        <li><i class="gs-icon">◌</i>推敲字词、标点与语句</li>
+        <li><i class="gs-icon">◌</i>评估立意、语言与文采</li>
+        <li><i class="gs-icon">◌</i>生成总分与修改建议</li>
+      </ul>
+
+      <div class="progress-track">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+
+      <div class="grade-error" id="grade-error" hidden>
+        <p class="ge-title" id="ge-title">AI 批改失败</p>
+        <p class="ge-detail" id="ge-detail"></p>
+        <div class="ge-actions">
+          <button type="button" class="btn btn-ghost" id="ge-back">返回修改</button>
+          <button type="button" class="btn btn-primary" id="ge-retry-ai">重试 AI 批改</button>
+          <button type="button" class="btn btn-ghost" id="ge-fallback">改用本地规则批改</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 模块三：查看分数与修改建议 -->
+  <section class="panel" id="panel-report">
+    <div class="report-head card">
+      <div class="score-ring-wrap">
+        <svg class="score-ring" viewBox="0 0 140 140">
+          <circle class="ring-bg" cx="70" cy="70" r="58" />
+          <circle class="ring-fg" id="ring-fg" cx="70" cy="70" r="58" />
+        </svg>
+        <div class="ring-center">
+          <span class="ring-score" id="total-score">0</span>
+          <span class="ring-total">/ 70</span>
+        </div>
+      </div>
+      <div class="report-meta">
+        <div class="report-title-row">
+          <h2 id="report-title">作文批改报告</h2>
+          <span class="grade-badge" id="grade-badge">二类卷</span>
+          <span class="engine-badge" id="engine-badge">AI 批改</span>
+        </div>
+        <p class="report-summary" id="report-summary"></p>
+        <div class="stat-chips" id="stat-chips"></div>
+      </div>
+    </div>
+
+    <!-- 审题契合度 -->
+    <div class="card deviation-card" id="deviation-card">
+      <h3 class="block-title"><span class="title-bar"></span>审题契合度</h3>
+      <div class="deviation-body">
+        <span class="dev-status" id="dev-status">—</span>
+        <p class="dev-detail" id="dev-detail"></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="block-title"><span class="title-bar"></span>诊断维度<span class="dim-note">（水平分仅供参考，不计入总分；上海卷按整体分档赋分）</span></h3>
+      <div class="dim-list" id="dim-list"></div>
+    </div>
+
+    <!-- 文章逻辑评判 -->
+    <div class="card logic-card">
+      <h3 class="block-title"><span class="title-bar"></span>文章逻辑评判<span class="dim-note">（中心论点 · 段落功能 · 论证链 · 逻辑谬误）</span></h3>
+      <div class="logic-thesis">
+        <span class="lt-label">中心论点</span>
+        <p id="logic-thesis"></p>
+      </div>
+      <div class="logic-flow" id="logic-flow"></div>
+      <div class="logic-chain">
+        <span class="lt-label">论证链条</span>
+        <p id="logic-chain"></p>
+      </div>
+      <div class="logic-cols">
+        <div class="logic-fallacies">
+          <h4>⚠ 逻辑谬误 / 断链处</h4>
+          <ul id="logic-fallacies"></ul>
+        </div>
+        <div class="logic-strengths">
+          <h4>✓ 逻辑亮点</h4>
+          <ul id="logic-strengths"></ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="report-grid">
+      <div class="card">
+        <h3 class="block-title"><span class="title-bar"></span>作文批注</h3>
+        <div class="legend">
+          <span><i class="lg lg-error"></i>错误</span>
+          <span><i class="lg lg-warn"></i>建议优化</span>
+          <span><i class="lg lg-logic"></i>逻辑问题</span>
+          <span><i class="lg lg-good"></i>亮点</span>
+        </div>
+        <div class="essay-view" id="essay-view"></div>
+      </div>
+
+      <div class="card">
+        <h3 class="block-title"><span class="title-bar"></span>修改建议</h3>
+        <ul class="sug-list" id="sug-list"></ul>
+        <h3 class="block-title praise-title"><span class="title-bar"></span>逐段修改建议</h3>
+        <ul class="para-advice-list" id="para-advice-list"></ul>
+        <h3 class="block-title praise-title"><span class="title-bar"></span>值得保持的优点</h3>
+        <ul class="praise-list" id="praise-list"></ul>
+      </div>
+    </div>
+
+    <!-- 逐句修改示范 -->
+    <div class="card rewrite-card">
+      <h3 class="block-title"><span class="title-bar"></span>逐句修改示范<span class="dim-note">（原句 → 问题 → 改写，可直接参考落笔）</span></h3>
+      <div class="rewrite-list" id="rewrite-list"></div>
+    </div>
+
+    <div class="actions report-actions">
+      <button type="button" class="btn btn-ghost" id="btn-print">🖨 打印 / 存为 PDF</button>
+      <button type="button" class="btn btn-primary" id="btn-again">修改后重新批改</button>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p id="footer-note">评分细则依据 2025 上海高三多区一模阅卷反馈提炼（五类档整体赋分，满分 70 分）。本地规则批改在浏览器内运行；AI 批改经本机 127.0.0.1 后端转发至你配置的大模型，请妥善保管 API Key。</p>
+</footer>
+
+<!-- AI 设置弹窗 -->
+<div class="modal-mask" id="settings-modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h3>🤖 AI 大模型设置</h3>
+      <button type="button" class="modal-close" id="modal-close" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="server-status" id="server-status">正在检测服务端配置……</div>
+
+      <div class="field">
+        <label for="ai-provider">服务商（OpenAI 兼容接口）</label>
+        <select id="ai-provider"></select>
+      </div>
+      <div class="field">
+        <label for="ai-key">API Key</label>
+        <input type="password" id="ai-key" placeholder="sk-... 仅保存在本浏览器，填写后优先使用" autocomplete="off" />
+        <p class="field-hint">留空则使用服务器 .env 中的配置。申请地址见服务商开放平台。</p>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="ai-base">接口地址 Base URL</label>
+          <input type="text" id="ai-base" placeholder="https://api.deepseek.com" />
+        </div>
+        <div class="field">
+          <label for="ai-model">模型名</label>
+          <input type="text" id="ai-model" placeholder="deepseek-chat" />
+        </div>
+      </div>
+      <p class="modal-tip" id="settings-msg"></p>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="btn-clear-key">清除本浏览器 Key</button>
+      <button type="button" class="btn btn-primary" id="btn-save-settings">保存设置</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/engine.js"></script>
+<script src="js/ai-client.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
