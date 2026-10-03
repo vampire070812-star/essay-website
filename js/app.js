@@ -650,10 +650,13 @@
     var flow = Array.isArray(lr.paragraphFlow) ? lr.paragraphFlow : [];
     $('logic-flow').innerHTML = flow.map(function (p) {
       var bad = p.issue && p.issue !== '无';
+      var methods = Array.isArray(p.methods) && p.methods.length ? p.methods.join('·') : '';
       return '<div class="lf-item' + (bad ? ' bad' : '') + '">' +
         '<div class="lf-head"><span class="lf-para">' + p.para + '</span>' +
-        '<span class="lf-role">' + str(p.role, 10) + '</span></div>' +
+        '<span class="lf-role">' + str(p.role, 10) + '</span>' +
+        (methods ? '<span class="lf-methods">' + str(methods, 30) + '</span>' : '') + '</div>' +
         '<div class="lf-gist">' + str(p.gist, 48) + '</div>' +
+        (p.structure ? '<div class="lf-struct">' + str(p.structure, 80) + '</div>' : '') +
         (bad ? '<div class="lf-issue">' + str(p.issue, 80) + '</div>' : '') +
         '</div>';
     }).join('');

@@ -146,6 +146,33 @@
     "孔子", "孟子", "屈原", "韩信", "范仲淹", "文天祥", "王阳明", "张桂梅", "樊锦诗", "哥白尼",
     "布鲁诺", "苏格拉底", "柏拉图", "亚里士多德", "梭罗", "海明威"];
 
+  // 哲学视角词典（思辨类议论文加分项：观点×出处）
+  var PHILO_TERMS = [
+    { name: '辩证法（对立统一）', re: /对立统一|辩证(?:法|统一|思维)|矛盾双[方]?面|一分为二地看/ },
+    { name: '量变质变规律', re: /量变|质变|厚积薄发|水滴石穿.*穿透|积累.*飞跃/ },
+    { name: '内因与外因', re: /内因|外因|内部矛盾|外部条件/ },
+    { name: '否定之否定（扬弃）', re: /否定之否定|扬弃|螺旋式上升/ },
+    { name: '中庸／中道', re: /中庸|执两用中|过犹不及|中道|黄金分割式的平衡|恰到好处.*分寸/ },
+    { name: '知行合一', re: /知行合一|致良知|事上磨练/ },
+    { name: '儒家修身（孔子孟子）', re: /克己复礼|君子求诸己|修身.*齐家|吾日三省|虽千万人吾往矣/ },
+    { name: '道家辩证（老子庄子）', re: /上善若水|祸福相倚|反者道之动|逍遥游|庖丁解牛|无为而无不为|曳尾于涂/ },
+    { name: '存在主义（萨特加缪）', re: /存在先于本质|存在主义|萨特|加缪|西西弗|荒诞英雄|自欺|坏信仰/ },
+    { name: '康德道德哲学', re: /康德|头顶的星空|心中的道德律|目的王国|人是目的/ },
+    { name: '尼采哲学', re: /尼采|精神三变|骆驼.*狮子.*婴儿|权力意志|成为你自己|重估一切价值/ },
+    { name: '柏拉图理念论', re: /柏拉图|理念世界|洞穴寓言|洞喻/ },
+    { name: '亚里士多德目的论', re: /亚里士多德|目的因|实践智慧|phronesis/ },
+    { name: '主体性与异化', re: /主体性|人的异化|被物化|工具理性|韦伯|法兰克福学派/ },
+    { name: '自由与必然', re: /自由意志|自由与必然|必然王国|自由王国|宿命论/ },
+    { name: '经验与理性', re: /经验主义|理性主义|休谟|笛卡尔.*我思|先验/ },
+    { name: '功利主义批判', re: /功利主义|边沁|最大多数人的最大幸福/ },
+    { name: '技术哲学（海德格尔）', re: /海德格尔|座架|技术的本质|技术是解蔽/ },
+    { name: '他者与共情（列维纳斯等）', re: /他者|主体间性|各美其美.*美美与共|费孝通/ },
+    { name: '范式转换（库恩）', re: /范式转换|范式革命|科学革命的结构/ }
+  ];
+
+  // 创意/独特观点表达（官方：与众不同的创新作文可入一类卷）
+  var NOVELTY_RE = /人们通常认为|大众往往|常识告诉我们|都说|世俗总|恰恰相反|未必|反其道|换个角度看|跳出[^，。]{0,10}看|与其说|或许[^，。]{0,14}才是/g;
+
   function hasAny(text, words) {
     for (var i = 0; i < words.length; i++) if (text.indexOf(words[i]) >= 0) return true;
     return false;
@@ -413,7 +440,7 @@
     var hasTitle = !!(title || titleLine);
     if (type === '议论文' && chars >= 600 && !hasTitle) {
       addSug('notitle', 'error', '疑似漏拟题目',
-        '上海高考要求“自拟题目”，漏拟题目会被扣分。好标题可以直接亮出核心观点，如“常识不应成为常态”。');
+        '上海高考要求“自拟题目”，官方评分细则明确规定未写题目扣 2 分。好标题可以直接亮出核心观点，如“常识不应成为常态”。');
     }
 
     // 首尾呼应
@@ -438,6 +465,27 @@
     var realityN = hitCount(text, REALITY_WORDS);
     var measureN = hitCount(text, MEASURE_WORDS);
     var hedgeN = hitCount(text, HEDGE_WORDS);
+
+    // 哲学视角检测（思辨类议论文一类卷加分项）
+    var philoHits = [];
+    PHILO_TERMS.forEach(function (pt) {
+      var m = pt.re.exec(text);
+      if (m) {
+        philoHits.push(pt.name);
+        addMark(m.index, Math.min(text.length, m.index + 16), 'mk-good',
+          '哲学视角：' + pt.name + '，提升思辨层次（一类卷加分项）', 2);
+      }
+    });
+
+    // 创意/独特观点检测（官方一类卷路径之一：与众不同的创新作文）
+    var noveltyHits = [], nvm;
+    while ((nvm = NOVELTY_RE.exec(text))) {
+      if (noveltyHits.indexOf(nvm[0]) < 0) noveltyHits.push(nvm[0]);
+      if (noveltyHits.length <= 2) {
+        addMark(nvm.index, Math.min(text.length, nvm.index + 14), 'mk-good',
+          '逆向/独特视角：与众不同的思考本身就是深刻的体现（官方一类卷路径）', 2);
+      }
+    }
 
     var hasConcede = concedeN > 0, hasTurn = turnN > 0;
     var dialectic = hasConcede && hasTurn;
@@ -630,7 +678,8 @@
           status: 'bad',
           label: '疑似偏题/套题',
           detail: '材料中的核心概念（' + promptConcepts.slice(0, 3).join('、') + '）在作文中均未出现，' +
-            '疑似脱离材料另起炉灶或套用宿构，按上海阅卷通常封顶四类。请回到材料重新审题立意。'
+            '疑似脱离材料另起炉灶或套用宿构，按上海阅卷通常封顶四类。请回到材料重新审题立意。' +
+            '（注意：若作文以文学化意象、隐喻方式回应题意，本地关键词匹配可能误报偏题——官方评卷主张“开放包容”，只要立意能自圆其说即公正计分，建议以 AI 批改或人工复核为准。）'
         };
       }
     }
@@ -773,7 +822,49 @@
     var logicThesis = thesisSentence ? thesisSentence.text.replace(/^[，。、；：\s]+/, '').slice(0, 80)
       : '（全文未出现明确中心论点）';
 
-    // —— 逐段功能识别 ——
+    // —— 逐段功能识别 + 论证方法分析 ——
+    // 论证方法逐段检测：例证/引证/对比/喻证/因果/条件/假设/数据
+    function paraMethods(t) {
+      var ms = [];
+      var hasEx = EXAMPLE_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
+      var hasQuote = /[「“][^」”]{4,30}[」”]/.test(t) || /俗(?:话|语)说|古人(?:云|言|曰)|有(?:人)?(?:云|言|曰)|曾(?:说|言)|名言/.test(t);
+      var hasContrast = /相反|与之相对|反观|而非|不是[^，。]{2,16}而是|却[^，。]{2,8}|相比/.test(t);
+      var hasSimile = /如同|犹如|宛如|好比|恰似|像[^，。]{2,12}一样|如[^，。]{2,12}般/.test(t);
+      var hasCause = /因为|之所以|由于|正因|这说明|可见|原因在于|源于/.test(t);
+      var hasCond = /只有[^，。]{2,16}才|只要[^，。]{2,16}就|倘若|前提是|在[^，。]{2,10}条件下|唯有/.test(t);
+      var hasHypo = /如果|假如|试想|倘若|假使|设想/.test(t);
+      var hasData = /\d+(?:\.\d+)?%|数据显示|调查|统计|据.{1,8}(?:统计|调查|报道)/.test(t);
+      if (hasQuote) ms.push('引证');
+      if (hasEx) ms.push('例证');
+      if (hasData) ms.push('数据');
+      if (hasContrast) ms.push('对比');
+      if (hasSimile) ms.push('喻证');
+      if (hasCause) ms.push('因果分析');
+      if (hasCond) ms.push('条件分析');
+      if (hasHypo) ms.push('假设论证');
+      return ms;
+    }
+
+    // 逐段结构完整性点评：观点句→论据→分析→小结 是否齐备
+    function paraStructure(t, role, idx) {
+      var parts = [];
+      var hasView = THESIS_WORDS.some(function (w) { return t.indexOf(w) >= 0; }) ||
+        /应该|应当|要|唯有|关键在于|重要的是/.test(t.slice(0, 60));
+      var hasEx = EXAMPLE_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
+      var hasAn = ANALYSIS_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
+      var hasEnd = /因此|所以|可见|这提示|唯有如此|方能/.test(t.slice(-60));
+      if (idx === 0) return '引论段：由材料/现象引入' + (hasView ? '，亮出中心论点' : '，建议段末补出明确论点句');
+      if (hasView && hasEx && hasAn) parts.push('观点→论据→分析，结构完整');
+      else if (hasView && hasEx && !hasAn) parts.push('观点+论据齐备，但缺例后分析收束');
+      else if (hasView && !hasEx && hasAn) parts.push('说理段：观点+分析，可补一个事例充实');
+      else if (hasView && !hasEx && !hasAn) parts.push('只有观点铺陈，论证单薄');
+      else if (!hasView && hasEx && hasAn) parts.push('以例带证：建议段首先亮分论点');
+      else if (!hasView && hasEx) parts.push('通段叙事说例，观点被淹没');
+      else parts.push('以说理推进');
+      if (hasEnd) parts.push('段内有小结回勾');
+      return parts.join('；');
+    }
+
     var paraFlow = paraRanges.map(function (pr, idx) {
       var t = pr.text, role, issue = '无';
       var hasEx = EXAMPLE_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
@@ -812,7 +903,10 @@
       else if (role === '分论点论证' && cjkLen(t) > 280) issue = '一段承载多个论证层次，建议分段';
 
       var gist = t.replace(/\s+/g, '').slice(0, 26);
-      return { para: idx + 1, role: role, gist: gist + (cjkLen(t) > 26 ? '…' : ''), issue: issue };
+      return {
+        para: idx + 1, role: role, gist: gist + (cjkLen(t) > 26 ? '…' : ''), issue: issue,
+        methods: paraMethods(t), structure: paraStructure(t, role, idx)
+      };
     });
 
     function firstHitWords(t, words) {
@@ -843,6 +937,8 @@
     if (depthN > 0) logicStrengths.push('能用“进一步/本质上”把论证推向更深层次，思辨有纵深');
     if (exampleGood) logicStrengths.push('事例后有分析句跟进，论据与论点在段落层面联系紧密');
     if (realityN > 0) logicStrengths.push('设置了联系当下的段落，文章有现实针对性，拓展了思辨广度');
+    if (philoHits.length > 0) logicStrengths.push('引入哲学视角（' + philoHits.slice(0, 2).join('、') + '），论证具有理论纵深，是思辨类议论文的加分项');
+    if (noveltyHits.length > 0) logicStrengths.push('观点或角度与众不同（' + noveltyHits.slice(0, 2).join('、') + '），符合官方“创新作文可入一类卷”的评价导向');
     if (!logicStrengths.length && chars >= 500) logicStrengths.push('能够围绕一个话题完整成篇，结构基本闭合');
 
     var logicReview = {
@@ -850,7 +946,7 @@
       paragraphFlow: paraFlow,
       chain: logicChain,
       fallacies: logicFallacies.slice(0, 10),
-      strengths: logicStrengths.slice(0, 3)
+      strengths: logicStrengths.slice(0, 4)
     };
 
     // —— 逐段修改建议（聚焦思辨深度、广度与段落功能连贯性）——
@@ -879,6 +975,7 @@
     var stats = {
       chars: chars, target: target, paragraphs: pn, sentences: sentences.length,
       idioms: idiomHits.length, literary: uniq(litHits).length, rhetoric: rhetoricCount,
+      philo: philoHits.length, novelty: noveltyHits.length,
       quotes: quoteCount, avgLen: avgLen,
       dialectic: (hasConcede ? 1 : 0) + (hasTurn ? 1 : 0),
       examples: exCount, analysis: anCount
@@ -890,9 +987,9 @@
     var score = 49;     // 基准分：完整成篇、立意基本契合 ≈ 三类中
     var cap = 70, floor = 6;
 
-    // 字数（区间触发，不做单点硬切）
+    // 字数（区间触发，不做单点硬切；官方细则：全文不足400字属五类卷 0-20）
     if (chars < 400) {
-      cap = Math.min(cap, pn >= 4 ? 30 : 20);
+      cap = Math.min(cap, 20);
       score -= 18;
     } else if (chars < 500) {
       cap = Math.min(cap, 38); score -= 12;
@@ -928,7 +1025,13 @@
     if (realityN > 0) score += 2;
     if (exampleGood) score += 2;
     if (quoteCount > 0) score += Math.min(1, quoteCount);
-    if (!hasTitle && chars >= 600) score -= 1;
+    // 哲学视角 + 创意独特观点（官方一类卷标准："有新意"；两类作文可入一类：思想深刻/创新独特）
+    if (philoHits.length >= 2) score += 3; else if (philoHits.length >= 1) score += 2;
+    if (noveltyHits.length >= 2) score += 2; else if (noveltyHits.length >= 1) score += 1;
+    // 文学性表达（官方一类卷标准："有文采"，与思辨兼备时计分）
+    if (rhetoricCount >= 2 && uniq(litHits).length >= 2) score += 2;
+    // 官方细则：未写题目扣 2 分
+    if (!hasTitle && chars >= 600) score -= 2;
 
     // 语言（容错提高：错别字/标点大幅降权，聚焦整体表达与思辨）
     score -= Math.min(2, Math.round(typoWords.length * 0.5));
@@ -979,6 +1082,9 @@
     if (dialectic) pContent += 8; else if (hasTurn) pContent += 3; else if (isArg && chars >= 500) pContent -= 8;
     if (depthN > 0) pContent += 8;
     if (realityN > 0) pContent += 5;
+    if (philoHits.length > 0) pContent += 6;
+    if (noveltyHits.length > 0) pContent += 4;
+    if (rhetoricCount >= 2 && uniq(litHits).length >= 2) pContent += 3;
     if (hedge) pContent -= 10;
     if (comparePrompt && !compareAnswered) pContent -= 8;
     if (measureHeavy) pContent -= 6;
@@ -1088,6 +1194,9 @@
 
     var praises = [];
     if (deviation.status === 'ok' && deviation.label === '审题契合') praises.push('紧扣材料核心概念写作，未见偏题');
+    if (philoHits.length > 0) praises.push('引入哲学视角（' + philoHits.slice(0, 2).join('、') + '），说理有理论纵深——这正是上海卷一类卷“有新意”的加分路径');
+    if (noveltyHits.length > 0) praises.push('观点或切入角度与众不同，官方评价导向明确支持此类创新作文冲击一类卷');
+    if (rhetoricCount >= 2 && uniq(litHits).length >= 2) praises.push('文学性表达与思辨兼备：修辞意象为说理增色，符合一类卷“有文采”的标准');
     if (chars >= 800 && chars <= 1200) praises.push('字数 ' + chars + '，符合“不少于 800 字”要求');
     if (dialectic) praises.push('运用“让步—转折”展开辩证分析，具备二类以上作文的思维品质');
     if (defineN > 0) praises.push('对核心概念作了界定，立论有边界意识');
@@ -1122,6 +1231,30 @@
       if (sugArr.length < 2) {
         sugArr.push({ level: 'tip', title: '冲击更高档', detail: '从三类到二类的关键是“辩证”：承认对立面的合理性再质疑其边界；从二类到一类的关键是“条件分析与现实针对性”：观点在什么情境下成立、对当下的我们有何启示。' });
       }
+    }
+
+    // 哲学视角建议（全文未引入任何哲学视角时，按话题给具体可引入的观点）
+    if (philoHits.length === 0 && isArg && chars >= 600) {
+      var allText = text + ' ' + (prompt || '');
+      var philoTip;
+      if (/等待|时机|快与慢|急|耐心/.test(allText)) {
+        philoTip = '可引入亚里士多德“实践智慧（phronesis）”与儒家“时中”：德性就是在恰当的时机做恰当的事——等待与争取并非二选一，而是对时机的判断力。';
+      } else if (/顺势|塑造|环境|适应|改变/.test(allText)) {
+        philoTip = '可引入萨特“存在先于本质”（人不被环境定义，而在选择中塑造自身）与老子“上善若水”（水善利万物而不争，顺应中自有其力）形成中西对话。';
+      } else if (/科技|人工智能|算法|工具|网络/.test(allText)) {
+        philoTip = '可引入海德格尔“技术的本质并非技术性的”（技术是一种解蔽方式，也可能把人变成“持存物”），把讨论从“怎么用”提升到“技术如何改变人”。';
+      } else if (/个体|集体|社会|他人|群体/.test(allText)) {
+        philoTip = '可引入“主体间性”与费孝通“各美其美，美人之美，美美与共”：个体价值恰恰在和他者的关系中生成，比单纯谈“做自己”更有理论纵深。';
+      } else if (/成功|失败|挫折|逆境|顺境/.test(allText)) {
+        philoTip = '可引入尼采“精神三变”（骆驼—狮子—婴儿）或加缪的西西弗神话：把成功学叙事升华为“超越成败的自我完成”，思辨立刻深一层。';
+      } else if (/传统|创新|新与旧|传承|守正/.test(allText)) {
+        philoTip = '可引入辩证法“否定之否定／扬弃”（新不是推倒重来，而是保留合理内核的螺旋上升）与库恩“范式转换”，把“继承与创新”的对立转化为更高统一。';
+      } else if (/自由|约束|规则|边界|限制/.test(allText)) {
+        philoTip = '可引入康德“自由即自律”（真正的自由不是随心所欲，而是自我立法）与“消极自由／积极自由”之分，把自由与规则的张力理论化。';
+      } else {
+        philoTip = '可尝试引入一个哲学视角提升思辨层次：如辩证法“对立统一”（先承认双方各自的道理再给更高统一）、康德“人是目的”（一切讨论最终落到人的价值）或中庸“过犹不及”（在两个极端间寻找尺度），引用时点出观点与出处即可，不必展开哲学史。';
+      }
+      sugArr.push({ level: 'tip', title: '引入哲学视角（一类卷加分项）', detail: philoTip });
     }
 
     var summary;
@@ -1165,7 +1298,7 @@
       rewrites: rewrites.slice(0, 8),
       paragraphAdvice: paraAdvice.slice(0, 8),
       suggestions: sugArr.slice(0, 10),
-      praises: praises.slice(0, 6),
+      praises: praises.slice(0, 8),
       // 标题未单独填写时，用正文首行（像标题的短行）作为报告标题
       title: title || (titleLine ? paragraphs[0] : ''), type: type
     };
