@@ -410,30 +410,151 @@
     return '';
   }
 
-  /* ---------- 自动拆分「作文题目」与「作文正文（含标题）」 ----------
-   * 只负责把题目材料分出来；标题不拆分，保留在正文首行。
+  /* ---------- 自动拆分「作文题目」与「作文（标题+正文）」 ----------
+   * 依据真实试卷/范文文件的结构特征做评分制切分：
+   *   [题目材料若干段] → [作文标题（独立短行）/ 范文标记] → [作者行(可删)] → [正文长段…]
+   * 标题不单独拆出，清理后保留在正文首行；"XX中学高三X班 姓名（63分）"等
+   * 教师文件里的作者信息行从正文中剔除。
    * 返回 { detected, prompt, essay, by }
-   * by: 'label'（有明确栏目标记）/ 'rule'（靠写作要求句式推断）
    */
-  // 强题目标记：作文题目 / 作文材料 / 写作题 / 题目： 等（行首，后接括号/冒号/空格）
-  var PROMPT_LABEL = /^[【\[]?\s*(?:作文题目|作文材料|写作题目|写作题|作文题|材料作文|题目|材料)\s*(?:[】\]]|[:：、.．]|\s)\s*/;
-  var PROMPT_LABEL_ALONE = /^[【\[]?\s*(?:作文题目|作文材料|写作题目|写作题|作文题|材料作文|题目|材料)\s*[】\]]?\s*[:：、.．]?\s*$/;
-  // 正文/作文开始标记
-  var ESSAY_LABEL = /^[【\[]?\s*(?:学生作文|考场作文|优秀作文|满分作文|范文|例文|作文示例|学生习作|作文|正文|文章)\s*(?:[】\]]|[:：、.．]|\s)\s*/;
-  var ESSAY_LABEL_ALONE = /^[【\[]?\s*(?:学生作文|考场作文|优秀作文|满分作文|范文|例文|作文示例|学生习作|作文|正文|文章)\s*[】\]]?\s*[:：、.．]?\s*$/;
-  // 题目开头用语
-  var PROMPT_START = /^(?:阅读下面(?:的)?(?:材料|文字)|根据(?:以下|下面|上述|所给)?(?:材料|要求)|阅读下列材料|阅读材料)/;
-  // 写作要求（题目结尾的典型句式）
-  var REQ_TAIL = /写(?:一篇|作)|不少?于\s*\d{3,4}\s*字|\d{3,4}\s*字(?:左右|以上)|题目自拟|自拟(?:题目|标题)|选(?:准|好|取|一个)?角度|明确文体|不要脱离材料|综合材料内容及含意|结合材料/;
-  var REQ_LINE = /^\s*要求\s*[:：]/;
-  // 强写作指令（作文正文里几乎不可能出现）：800字/自拟标题/明确文体/不要套作 等
-  var REQ_STRONG =
-    /不少?于\s*\d{3,4}\s*字|\d{3,4}\s*字(?:以上|左右)|题目自拟|自拟(?:题目|标题)|明确文体|不要套作|不得抄袭|不要脱离材料内容/;
 
-  function stripLabel(s, re, aloneRe) {
-    var t = String(s || '').trim();
-    if (aloneRe.test(t)) return '';
-    return t.replace(re, '').trim();
+  // —— 题目侧特征 ——
+  // 题目标记：括号内含"作文题/作文材料/写作题"等（兼容【奉贤一模作文题】【2025虹口一模】等）
+  var RE_PROMPT_TAG_BRACKET = /[【\[][^】\]]*(?:作文题目|作文题|作文材料|材料作文|写作题目|写作题|语文试题|考试作文)[^】\]]*[】\]]/;
+  var RE_PROMPT_TAG_BRACKET_EXAM = /[【\[][^】\]]*(?:一模|二模|三模|模考|高考|期末|联考|月考)[^】\]]*[】\]]/;
+  var RE_PROMPT_TAG_ANY = /(?:一模|二模|三模|模考|高考|期末|联考|月考|质量抽测|调研).{0,10}(?:作文题|作文材料|写作题|作文)/;
+  var RE_PROMPT_LABEL_INLINE = /^[【\[]?\s*(?:作文题目|作文材料|写作题目|写作题|作文题|材料|题目)\s*[】\]]?\s*[:：、.．]/;
+  // 高考写作任务句（上海卷典型问法）
+  var RE_TASK = /请?写(?:一篇|作).{0,30}文章|写一篇不少于|谈谈你?的?(?:认识|思考|看法|感悟|理解|体验|见解)|你(?:有)?(?:怎样|怎样的|怎样的一种)?(?:思考|认识|看法)|对此.*(?:思考|看法|认识)/;
+  var RE_REQ_STRONG = /不少?于\s*\d{3,4}\s*字|\d{3,4}\s*字(?:以上|左右)|题目自拟|自拟(?:题目|标题)|明确文体|不要套作|不得抄袭|不要脱离材料内容|选(?:准|好|取|一个)?角度/;
+  var RE_REQ_LINE = /^\s*[（(]?\s*\d?\s*[）)]?\s*要求\s*[:：]/;
+  // 双观点/现象类材料的典型句式
+  var RE_DUAL_VIEW = /有人(?:认为|说|觉得)[\s\S]{0,120}(?:也有人|而有人|另一些人)|不少人[\s\S]{0,60}(?:却|但).{0,20}(?:很多人|许多人)|有的人[\s\S]{0,80}有的人/;
+  // 材料引导语（段首）
+  var RE_LEAD = /^(?:阅读下面(?:的)?(?:材料|文字)|根据(?:以下|下面|上述|所给)?(?:材料|要求)|阅读下列材料|生活中[，,]|社会上[，,]|在日常生活中|当下[，,]|如今[，,]|现代社会|人们常说|有人说|我们常说)/;
+
+  // —— 作文侧特征 ——
+  var RE_ESSAY_TAG = /^[【\[]?\s*(?:参考(?:例文|作文|范文)|优秀(?:作文|范文)|考场作文|学生(?:作文|习作|范文)|满分作文|范文示例|作文示例|范文|例文|学生作文|优秀作文|习作)\s*[】\]]?\s*[:：、.．]?\s*$/;
+  var RE_AUTHOR = /(?:中学|高中|附中|学校|高三|高二|高复|[一二三四五六]?\d\s*班|（\s*\d{2}\s*分\s*）|\(\s*\d{2}\s*分\s*\))/;
+  var RE_SCORE_TAIL = /[（(]\s*(?:[一二三四五]类(?:卷)?(?:上|中|下)?|\d{2}\s*分(?:卷)?(?:[，,][^）)]*)?)\s*[）)]\s*$/;
+  var RE_BAND_TAIL = /[（(]\s*(?:一类|二类|三类|四类|五类)[^）)]*[）)]\s*$/;
+  var RE_ARG_MARK = /诚然|固然|然而|但是|但|因此|所以|首先|其次|再者|再次|最后|反观当下|在当下|当下|依我之见|在我看来|笔者认为|本质上|进一步(?:分析|说|看)|究其根本|由此可见|换言之|不仅|更|而非/;
+
+  function hasEndPunct(s) {
+    return /[。！？…!?]/.test(s);
+  }
+
+  // 教师分析文件里的栏目短行，不是作文标题
+  var RE_META_TITLE = /^(?:【?\s*(?:文题解析|题目解析|试题分析|作文解析|审题篇?|审题指导|审题立意|立意篇?|立意指导|写作指导|写作反馈|写作思路|提纲|前言|导语|原题(?:呈现|回顾)?|题目分析|题意分析|关键概念|深度解析|构思详解|评分(?:说明|标准|细则)?|阅卷(?:反馈|情况|总结|分析)?|参考答案?|典型(?:问题|错误|卷例)|考点分析|优秀例文|参考例文|范文赏析|例文赏析)\s*】?)|(?:第\s*\d+\s*题)/;
+
+  // 独立短行、无句末标点、不含指令性词语 → 像作文标题
+  // 标题允许含逗号（如"曲水流觞，以行塑形"），但不含句号/问号/感叹号/分号/顿号
+  function looksLikeTitleLine(p) {
+    var t = String(p || '').trim();
+    if (!t || t.length < 2 || t.length > 20) return false;
+    if (/^[【〔\[]/.test(t)) return false; // 【范文】〔论据材料〕类栏目标记
+    if (/^[—–\-－]{1,2}/.test(t)) return false; // ——伍尔夫 类名言署名行
+    if (/[。！？；：、…!?]/.test(t)) return false;
+    if (/要求|请写一篇|自拟|不少于|\d{3,4}\s*字|阅读下面|根据.*材料|作文题|作文材料|写作题|参考例文|^\d+[.、]/.test(t)) return false;
+    if (/^\d+$/.test(t)) return false;
+    if (RE_META_TITLE.test(t)) return false;
+    // 标题除（60分）/（一类卷）这类教师评分尾巴外，不含其他括号说明
+    if (/[（(]/.test(t) && !(RE_SCORE_TAIL.test(t) || RE_BAND_TAIL.test(t))) return false;
+    // 汉字占比要够（排除英文/网址行）
+    var cjk = (t.match(/[一-鿿]/g) || []).length;
+    return cjk >= 2 && cjk / t.replace(/\s/g, '').length >= 0.6;
+  }
+
+  // 事例卡条目：《玩偶之家》：娜拉……（论据目录，不是作文正文）
+  var RE_EXAMPLE_CARD = /^《[^》]{2,12}》\s*[：:]|^[①②③④⑤⑥⑦⑧⑨⑩]/;
+
+  // 短行、像"XX中学高三（3）班  姓名（63分）"的作者/署名信息
+  function looksLikeAuthorLine(p) {
+    var t = String(p || '').trim();
+    if (!t || t.length > 42 || hasEndPunct(t)) return false;
+    if (RE_AUTHOR.test(t)) {
+      // 必须是典型署名结构：学校/年级/班级/分数 至少命中两个信号更稳
+      var n = 0;
+      if (/中学|高中|附中|学校/.test(t)) n++;
+      if (/高三|高二|高复|高[一二三]/.test(t)) n++;
+      if (/\d\s*班|[一二三四五六]班/.test(t)) n++;
+      if (/\d{2}\s*分/.test(t)) n++;
+      return n >= 2 || /\d{2}\s*分/.test(t);
+    }
+    return false;
+  }
+
+  // 题目侧评分：合并文本越像"材料+写作任务"，分越高
+  function scorePrompt(text, firstPara, hasTag) {
+    var s = 0;
+    if (hasTag) s += 4;
+    if (RE_TASK.test(text)) s += 4;
+    if (RE_REQ_STRONG.test(text)) s += 3;
+    if (RE_DUAL_VIEW.test(text)) s += 3;
+    if (RE_LEAD.test(firstPara)) s += 2;
+    if (RE_REQ_LINE.test(text)) s += 1;
+    // 材料中出现引号核心概念（如"断舍离"）是材料题强信号
+    var q = text.match(/[“"「『]([^”"」』]{2,8})[”"」』]/g);
+    if (q && RE_TASK.test(text)) s += 1;
+    return s;
+  }
+
+  // 作文侧评分：标题行 + 作者行 + 议论性长段
+  function scoreEssay(parasFrom) {
+    var rest = parasFrom;
+    var s = 0, idx = 0, head = rest[0] || '';
+    var byTag = false, byTitle = false;
+
+    if (RE_ESSAY_TAG.test(head)) {
+      byTag = true; s += 4; idx = 1;
+      // 标记之后一段若为标题行
+      if (rest[idx] && looksLikeTitleLine(rest[idx])) { s += 2; idx++; }
+    } else if (looksLikeTitleLine(head)) {
+      byTitle = true; s += 3; idx = 1;
+    } else {
+      return { score: 0 };
+    }
+
+    // 标题/标记后 1-2 行内的作者署名行
+    var authorRemoved = 0;
+    for (var k = idx; k < Math.min(idx + 2, rest.length); k++) {
+      if (looksLikeAuthorLine(rest[k])) { s += 3; authorRemoved++; }
+    }
+
+    // 正文段统计（跳过作者行）
+    var body = rest.slice(idx).filter(function (p) { return !looksLikeAuthorLine(p); });
+    var bodyText = body.join('');
+    var longParas = body.filter(function (p) { return cjkCount(p) >= 80; }).length;
+    var argParas = body.filter(function (p) { return RE_ARG_MARK.test(p); }).length;
+    if (longParas >= 2) s += 2; else if (longParas >= 1) s += 1;
+    if (argParas >= 2) s += 3; else if (argParas >= 1) s += 1;
+    if (body.length >= 3) s += 1;
+    if (cjkCount(bodyText) >= 200) s += 1;
+
+    return {
+      score: s,
+      byTag: byTag,
+      byTitle: byTitle,
+      essayStart: 0,
+      tagConsumed: byTag ? 1 : 0,
+      titleIdx: byTag ? (looksLikeTitleLine(rest[1]) ? 1 : -1) : 0,
+      authorRemoved: authorRemoved,
+      bodyParas: body
+    };
+  }
+
+  // 清理作文标题行上的分数/档位尾巴：常识不应成为常态（60分） → 常识不应成为常态
+  function cleanTitleLine(t) {
+    return String(t || '').replace(RE_SCORE_TAIL, '').replace(RE_BAND_TAIL, '').trim();
+  }
+
+  function stripPromptTag(line) {
+    var t = String(line || '').trim();
+    var stripped = t.replace(RE_PROMPT_TAG_BRACKET, '').replace(RE_PROMPT_TAG_BRACKET_EXAM, '').trim();
+    if (stripped.length < 4) return '';
+    t = stripped;
+    t = t.replace(RE_PROMPT_LABEL_INLINE, '').trim();
+    return t;
   }
 
   function splitDocument(raw) {
@@ -442,86 +563,113 @@
     var none = { detected: false, prompt: '', essay: full, by: '' };
     if (paras.length < 3) return none;
 
-    var promptIdx = -1, essayIdx = -1, i, j;
-
-    // 1) 找题目标记（前 12 段内）；单独成行的标记、或行首"题目：……"均可
-    for (i = 0; i < Math.min(paras.length, 12); i++) {
-      if (PROMPT_LABEL_ALONE.test(paras[i]) || (i <= 6 && PROMPT_LABEL.test(paras[i]))) {
-        promptIdx = i; break;
-      }
-    }
-    // 2) 找正文标记（必须在题目标记之后，或文件前半部分）
-    var searchFrom = promptIdx >= 0 ? promptIdx + 1 : 0;
-    for (j = searchFrom; j < paras.length - 1; j++) {
-      if (ESSAY_LABEL_ALONE.test(paras[j]) || ESSAY_LABEL.test(paras[j])) { essayIdx = j; break; }
+    // 标记可能在的题目标记位置（前 10 段），用于题目侧加分
+    var tagIdx = -1;
+    for (var t = 0; t < Math.min(paras.length, 10); t++) {
+      if (RE_PROMPT_TAG_BRACKET.test(paras[t]) || RE_PROMPT_TAG_BRACKET_EXAM.test(paras[t]) ||
+          RE_PROMPT_TAG_ANY.test(paras[t]) || RE_PROMPT_LABEL_INLINE.test(paras[t])) { tagIdx = t; break; }
     }
 
-    var promptParts = [], essayParts = [], by = '';
+  // 审题分析提纲的痕迹（作文开头几段不应出现）
+  var RE_OUTLINE_MARK = /^\s*[①②③④⑤⑥⑦⑧⑨⑩]|[【\[](?:原因剖析|结果剖析|写作思路|审题|立意|提纲)/;
+  // 题干里不会出现的词：论证推进词 + 教师分析文件的元话语
+  // 一旦"题目侧"含这些词，说明切点落进了作文正文或阅卷分析文档
+  var RE_PROMPT_POLLUTION =
+    /诚然|固然|然而|但是|因此|所以说|首先|其次|再者|反观当下|依我之见|在我看来|笔者认为|本质上|进一步分析|究其根本|由此可见|毋庸讳言|究其原因|换言之|文题解析|审题指导|审题立意|写作反馈|阅卷(?:反馈|情况|总结|分析|组)?|评分(?:说明|标准|细则)?|参考答案?|题意分析|立意分析|典型(?:问题|错误|卷例)|考点|关键概念|构思详解|试题分析|深度解析|【=|批注|旁批/;
+  // 材料正文的强信号（用于定位材料起始、剥离试卷抬头）
+  function looksLikeMaterialLine(p) {
+    return RE_TASK.test(p) || RE_REQ_STRONG.test(p) || RE_LEAD.test(p) || RE_DUAL_VIEW.test(p);
+  }
 
-    if (promptIdx >= 0 && essayIdx > promptIdx) {
-      // 两个标记都在
-      promptParts = paras.slice(promptIdx, essayIdx);
-      promptParts[0] = stripLabel(promptParts[0], PROMPT_LABEL, PROMPT_LABEL_ALONE);
-      essayParts = paras.slice(essayIdx + 1);
-      var headInline = stripLabel(paras[essayIdx], ESSAY_LABEL, ESSAY_LABEL_ALONE);
-      if (headInline) essayParts.unshift(headInline);
-      by = 'label';
-    } else if (essayIdx >= 0 && promptIdx < 0) {
-      // 只有正文标记：前面整体当作题目——但前文必须有题目特征（引导语/写作要求），
-      // 否则可能是正文中偶然出现的"作文/正文"字样，交给规则分支再判
-      var beforeText = paras.slice(0, essayIdx).join('');
-      if (REQ_TAIL.test(beforeText) || PROMPT_START.test(paras[0])) {
-        promptParts = paras.slice(0, essayIdx);
-        essayParts = paras.slice(essayIdx + 1);
-        var headInline2 = stripLabel(paras[essayIdx], ESSAY_LABEL, ESSAY_LABEL_ALONE);
-        if (headInline2) essayParts.unshift(headInline2);
-        by = 'label';
-      } else {
-        essayIdx = -1; // 该标记不可信，回落规则推断
-      }
-    }
-    if (!by) {
-      // 3) 无明确标记：靠"写作要求"句式找题目结尾
-      var startIdx = 0;
-      if (promptIdx >= 0) {
-        startIdx = promptIdx;
-        paras[promptIdx] = stripLabel(paras[promptIdx], PROMPT_LABEL, PROMPT_LABEL_ALONE);
-      }
-      var headLikePrompt = PROMPT_START.test(paras[0]) || promptIdx === 0;
-      var limit = Math.max(2, Math.floor(paras.length * 0.45));
-      var tailIdx = -1;
-      for (i = Math.max(1, startIdx); i <= Math.min(limit, paras.length - 2); i++) {
-        var p = paras[i];
-        // 必须含"不少于800字/自拟标题/明确文体"等强指令，普通作文正文不会出现这些词
-        if (REQ_STRONG.test(p) && (headLikePrompt || promptIdx === 0 || REQ_LINE.test(p) || i <= 4)) {
-          tailIdx = i; // 取最后一个匹配段（要求可能跨两句）
+  // 枚举作文起点 i：题目 = [tag起点 .. i)，作文 = [i ..]
+  var tagStart = tagIdx >= 0 ? tagIdx : 0;
+    var best = null;
+    var maxI = Math.min(paras.length - 1, Math.max(3, Math.floor(paras.length * 0.8)));
+    for (var i = Math.max(1, tagStart); i <= maxI && !best; i++) {
+      // 作文起点必须是"标题行"或"范文/例文标记"
+      if (!looksLikeTitleLine(paras[i]) && !RE_ESSAY_TAG.test(paras[i])) continue;
+
+      var promptParas = paras.slice(tagStart, i);
+      var hasTag = tagIdx >= 0 && tagIdx < i;
+      // 题目标记单独成行时不计入正文内容
+      var cleanPromptParas = promptParas.map(function (p, pi) {
+        if (hasTag && pi === (tagIdx - tagStart)) return stripPromptTag(p);
+        return p;
+      }).filter(Boolean);
+      // 夹着长篇审题分析时只留到最后的写作要求段
+      if (cjkCount(cleanPromptParas.join('')) > 1200) {
+        var ct2 = -1;
+        for (var pi3 = 0; pi3 < Math.min(cleanPromptParas.length, 16); pi3++) {
+          if (RE_REQ_STRONG.test(cleanPromptParas[pi3]) || (RE_TASK.test(cleanPromptParas[pi3]) && pi3 >= 1)) ct2 = pi3;
         }
+        if (ct2 >= 1 && ct2 < cleanPromptParas.length - 1) cleanPromptParas = cleanPromptParas.slice(0, ct2 + 1);
       }
-      if (tailIdx < 0) return none;
-
-      // 无引导语、无题目标记时，拆出的作文首段必须像"标题行"（短且无句末标点）
-      if (!headLikePrompt && promptIdx < 0) {
-        var firstEssayPara = paras[tailIdx + 1] || '';
-        var looksLikeTitle = firstEssayPara.length >= 2 && firstEssayPara.length <= 22 &&
-          !/[。！？，；：、…!?]/.test(firstEssayPara);
-        if (!looksLikeTitle) return none;
+      // 无标记时剥离"2025届XX区高三语文一模"之类的试卷抬头行
+      if (!hasTag && cleanPromptParas.length > 1) {
+        for (var hp = 0; hp < Math.min(4, cleanPromptParas.length - 1); hp++) {
+          if (looksLikeMaterialLine(cleanPromptParas[hp])) break;
+        }
+        if (hp > 0) cleanPromptParas = cleanPromptParas.slice(hp);
       }
+      var promptText = cleanPromptParas.join('');
+      var promptFirst = cleanPromptParas[0] || '';
+      var pScore = scorePrompt(promptText, promptFirst, hasTag);
+      if (pScore < 4) continue;
+      // 题干纯度：题干是中性叙述+任务句，不应含论证推进词
+      if (RE_PROMPT_POLLUTION.test(promptText)) continue;
 
-      promptParts = paras.slice(0, tailIdx + 1);
-      essayParts = paras.slice(tailIdx + 1);
-      by = 'rule';
+      var info = scoreEssay(paras.slice(i));
+      if (info.score < 6) continue;
+
+      var essayBodyText = info.bodyParas.join('');
+      // 合理性：正文必须比题目长且达到基本篇幅
+      if (cjkCount(essayBodyText) < 120) continue;
+      if (cjkCount(essayBodyText) <= cjkCount(promptText)) continue;
+
+      // 防误切 a：作文前 5 段出现"①②/【原因剖析】/《玩偶之家》：事例卡"等提纲痕迹 → 这还是分析区
+      var headWindow = paras.slice(i, i + 6);
+      if (headWindow.some(function (p) { return RE_OUTLINE_MARK.test(p) || RE_EXAMPLE_CARD.test(p); })) continue;
+      // 防误切 b：作文区后面（第 4 段起）还存在"参考例文/范文"标记 → 真正的作文在更后面
+      var laterTag = paras.slice(i + 3, i + 60).some(function (p) { return RE_ESSAY_TAG.test(p); });
+      if (laterTag) continue;
+
+      // 取最早达标的切点（首个作文标题/标记优先，避免多范文时偏向最末一篇）
+      best = { cut: i, total: pScore + info.score, pScore: pScore, info: info, promptParasClean: cleanPromptParas };
     }
 
-    var prompt = normalizeText(promptParts.filter(Boolean).join('\n\n'));
-    var essay = normalizeText(essayParts.filter(Boolean).join('\n\n'));
+    if (!best) return none;
 
-    // 合理性校验：题目长度 15-900；正文要比题目长且不少于 80 字，否则判为误拆
+    // —— 组装题目（已在评分时完成标记剥离与分析裁剪） ——
+    var prompt = normalizeText(best.promptParasClean.join('\n\n'));
+
+    // —— 组装作文：标题（清理分数尾巴）+ 正文，剔除作者信息行 ——
+    var ep = paras.slice(best.cut);
+    var out = [];
+    var headConsumed = best.info.tagConsumed; // 跳过"参考例文"标记行
+    for (var j2 = headConsumed; j2 < ep.length; j2++) {
+      var isTitle = j2 === best.info.titleIdx || (headConsumed === 0 && j2 === 0);
+      if (isTitle) {
+        var ct = cleanTitleLine(ep[j2]);
+        if (ct) out.push(ct);
+      } else if (looksLikeAuthorLine(ep[j2]) && j2 <= 2) {
+        // 仅剔除标题后紧跟的前两条作者行，正文深处不动
+        continue;
+      } else {
+        out.push(ep[j2]);
+      }
+    }
+    var essay = normalizeText(out.join('\n\n'));
+
     var pLen = cjkCount(prompt), eLen = cjkCount(essay);
-    if (pLen < 12 || pLen > 900 || eLen < 80 || eLen <= pLen) return none;
-    // 正文里不应再出现大段"写作要求"指令（误拆特征）
-    if (/选准角度.*不要脱离材料内容/.test(essay)) return none;
+    if (pLen < 12 || pLen > 1500 || eLen < 100) return none;
+    if (/选准角度[\s\S]{0,40}不要脱离材料内容/.test(essay)) return none;
 
-    return { detected: true, prompt: prompt, essay: essay, by: by };
+    return {
+      detected: true,
+      prompt: prompt,
+      essay: essay,
+      by: best.info.byTag ? 'title-tag' : 'title-line'
+    };
   }
 
   function cjkCount(s) {
