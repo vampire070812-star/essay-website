@@ -663,18 +663,23 @@
   $('btn-print').addEventListener('click', function () {
     var title = $('report-title').textContent.trim();
     var origTitle = document.title;
-    document.title = title ? title.replace(/[《》]/g, '') + '批改报告' : '作文批改报告';
-    // 临时展开滚动区域
-    document.querySelectorAll('.essay-view, .modal-body, .paragraphFlow-list').forEach(function (el) {
+    // report-title 形如“《xxx》批改报告”，去掉书名号和已有后缀，只拼一次
+    var base = title.replace(/[《》]/g, '').replace(/批改报告/g, '').trim();
+    document.title = (base && base !== '作文批改报告') ? base + '批改报告' : '作文批改报告';
+    // 临时展开滚动区域（纵向高度限制 + 段落功能链横向滚动）
+    var expandSel = '.essay-view, .modal-body, .logic-flow, .rewrite-list';
+    document.querySelectorAll(expandSel).forEach(function (el) {
       el.style.maxHeight = 'none';
       el.style.overflow = 'visible';
+      el.style.overflowX = 'visible';
     });
     setTimeout(function () {
       window.print();
       document.title = origTitle;
-      document.querySelectorAll('.essay-view, .modal-body, .paragraphFlow-list').forEach(function (el) {
+      document.querySelectorAll(expandSel).forEach(function (el) {
         el.style.maxHeight = '';
         el.style.overflow = '';
+        el.style.overflowX = '';
       });
     }, 100);
   });

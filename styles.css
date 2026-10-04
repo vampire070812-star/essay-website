@@ -716,22 +716,47 @@ textarea {
   .uz-btn { width: 100%; text-align: center; }
 }
 
-/* ============ 打印 ============ */
+/* ============ 打印 / PDF ============ */
+@page { margin: 12mm 10mm; }
 @media print {
   .site-header, .site-footer, .stepper, .report-actions,
   .upload-zone, .upload-progress { display: none !important; }
-  body { background: #fff; margin: 0; }
+  body { background: #fff; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .container { margin: 0; max-width: 100%; padding: 0; }
   .panel { display: none !important; }
   #panel-report { display: block !important; }
-  .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
-  .essay-view { max-height: none !important; overflow: visible !important; }
-  .modal-body { max-height: none !important; overflow: visible !important; }
-  .paragraphFlow-list { max-height: none !important; overflow: visible !important; }
-  .rewrite-list { max-height: none !important; overflow: visible !important; }
-  .annotated-wrap { max-height: none !important; overflow: visible !important; }
-  /* 确保分页时不截断卡片 */
-  .report-section, .logic-card, .rewrite-card { break-inside: avoid; }
-  /* 标题页优化 */
-  .report-header { page-break-after: always; }
+
+  /* 大卡片允许跨页自然续排——强制整卡不换页会在页底留下大片空白 */
+  .card {
+    box-shadow: none !important; border: 1px solid #ccc;
+    break-inside: auto; page-break-inside: auto;
+    margin-bottom: 12px; padding: 14px 16px;
+  }
+  /* 仅小单元（标题、单条建议/改写、链条节点、维度条）不被拦腰截断 */
+  .block-title, .sug-item, .praise-item, .rw-item, .lf-item, .fal-item,
+  .dim-item, .logic-thesis, .logic-chain, .ar-angle {
+    break-inside: avoid; page-break-inside: avoid;
+  }
+
+  /* 所有滚动区展开，内容完整可见 */
+  .essay-view, .modal-body, .rewrite-list {
+    max-height: none !important; overflow: visible !important;
+  }
+
+  /* 段落功能链：屏幕上是横向滚动，打印时改为纵向堆叠、全宽完整展示 */
+  .logic-flow {
+    display: flex !important; flex-direction: column !important;
+    overflow: visible !important; gap: 6px !important;
+    padding: 0 0 10px !important;
+  }
+  .logic-flow .lf-item {
+    min-width: 0 !important; max-width: none !important; width: 100% !important;
+  }
+  .logic-flow .lf-item:not(:last-child)::after { display: none !important; }
+
+  /* 作文原文去掉屏幕上的横格纸底纹，白底打印更干净 */
+  .essay-view {
+    background: #fff !important; border: none !important;
+    padding: 0 !important; font-size: 13.5px; line-height: 1.9;
+  }
 }
