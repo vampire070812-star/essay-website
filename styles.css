@@ -375,7 +375,7 @@ textarea {
     repeating-linear-gradient(#fbfbfd, #fbfbfd 31px, #f1f3f8 32px);
   border: 1px solid var(--line); border-radius: 10px;
   padding: 18px 20px; white-space: pre-wrap; word-break: break-word;
-  max-height: 560px; overflow-y: auto;
+  /* 完整纵向铺开，与右侧建议卡等高，不做内部滚动（页面整体滚动） */
 }
 .essay-view .p-break { display: block; height: 12px; }
 .mk { border-radius: 3px; padding: 0 2px; cursor: help; position: relative; }
