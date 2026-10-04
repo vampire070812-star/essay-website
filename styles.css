@@ -720,10 +720,18 @@ textarea {
 @media print {
   .site-header, .site-footer, .stepper, .report-actions,
   .upload-zone, .upload-progress { display: none !important; }
-  body { background: #fff; }
+  body { background: #fff; margin: 0; }
   .container { margin: 0; max-width: 100%; padding: 0; }
   .panel { display: none !important; }
   #panel-report { display: block !important; }
   .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
-  .essay-view { max-height: none; overflow: visible; }
+  .essay-view { max-height: none !important; overflow: visible !important; }
+  .modal-body { max-height: none !important; overflow: visible !important; }
+  .paragraphFlow-list { max-height: none !important; overflow: visible !important; }
+  .rewrite-list { max-height: none !important; overflow: visible !important; }
+  .annotated-wrap { max-height: none !important; overflow: visible !important; }
+  /* 确保分页时不截断卡片 */
+  .report-section, .logic-card, .rewrite-card { break-inside: avoid; }
+  /* 标题页优化 */
+  .report-header { page-break-after: always; }
 }

@@ -658,7 +658,26 @@
   }
 
   $('btn-again').addEventListener('click', function () { showStep(1, true); textEl.focus(); });
-  $('btn-print').addEventListener('click', function () { window.print(); });
+
+  // 生成报告 PDF：设置打印标题（文件名），展开所有滚动区域后打印
+  $('btn-print').addEventListener('click', function () {
+    var title = $('report-title').textContent.trim();
+    var origTitle = document.title;
+    document.title = title ? title.replace(/[《》]/g, '') + '批改报告' : '作文批改报告';
+    // 临时展开滚动区域
+    document.querySelectorAll('.essay-view, .modal-body, .paragraphFlow-list').forEach(function (el) {
+      el.style.maxHeight = 'none';
+      el.style.overflow = 'visible';
+    });
+    setTimeout(function () {
+      window.print();
+      document.title = origTitle;
+      document.querySelectorAll('.essay-view, .modal-body, .paragraphFlow-list').forEach(function (el) {
+        el.style.maxHeight = '';
+        el.style.overflow = '';
+      });
+    }, 100);
+  });
 
   /* ---------- AI 设置弹窗 ---------- */
   var modal = $('settings-modal');
