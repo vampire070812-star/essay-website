@@ -213,8 +213,8 @@
 
       textEl.value = bodyText;
       updateCount();
-      var n = EssayEngine.cjkLen(bodyText);
-      var msg = '✓ 识别成功，共约 ' + n + ' 字。' + splitMsg;
+      var n = EssayEngine.gridLen(bodyText);
+      var msg = '✓ 识别成功，共 ' + n + ' 字（含标点占格，与输入框计数一致）。' + splitMsg;
       if (res.kind === 'image') {
         msg += '。图片 OCR 可能有少量错字，请对照原文核对修改后再批改';
       }

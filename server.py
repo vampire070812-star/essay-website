@@ -264,6 +264,10 @@ def build_grade_payload(data):
     prompt = (data.get("prompt") or "").strip()
     text = (data.get("text") or "").strip()
 
+    # 系统侧精确字数（考场占格口径：汉字与标点均占格，空白不计）。
+    # 大模型自己数不准字数，必须以本统计为唯一依据，严禁自行估算。
+    grid_count = len(re.sub(r'\s', '', text))
+
     if prompt:
         prompt_block = (
             "【作文题目材料】（学生据此写作，请先核查审题契合度）\n<<<\n%s\n>>>\n"
@@ -280,9 +284,11 @@ def build_grade_payload(data):
         "%s"
         "%s\n"
         "文体：%s（上海高考以思辨性议论文为主）\n"
-        "字数要求：不少于 %s 字（按考场占格口径：汉字与标点均占格；请核查实际字数）\n"
+        "字数要求：不少于 %s 字（按考场占格口径：汉字与标点均占格）\n"
+        "【系统精确统计】正文占格字数（含标点）＝ %d 字。你的字数核查、字数相关的评价与建议【必须且只能】使用这个数字，"
+        "严禁自行数字或估算，严禁输出与该数字不一致的字数；字数是否达到 %s 字以 %d 为准判断。\n"
         "下面是学生作文正文：\n<<<\n%s\n>>>\n\n%s"
-    ) % (prompt_block, title_line, genre, target, text, GRADE_SCHEMA_HINT)
+    ) % (prompt_block, title_line, genre, target, grid_count, target, grid_count, text, GRADE_SCHEMA_HINT)
 
 
 # ============================================================
