@@ -612,11 +612,6 @@ textarea {
   border-radius: 5px; padding: 3px 6px; line-height: 1.5;
 }
 .lf-gist { font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
-.lf-issue {
-  margin-top: 5px; font-size: 11px; color: #92400e; background: var(--amber-bg);
-  border-radius: 5px; padding: 3px 6px; line-height: 1.5;
-}
-.lf-item.bad { border-color: #fcd34d; background: #fffdf5; }
 
 .logic-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .logic-cols h4 { font-size: 13px; margin-bottom: 8px; color: var(--ink-2); }

@@ -279,8 +279,7 @@
           role: String(p.role || '分论点论证').slice(0, 12),
           gist: String(p.gist || '').slice(0, 80),
           methods: Array.isArray(p.methods) ? p.methods.map(function (m) { return String(m).slice(0, 10); }).slice(0, 4) : [],
-          structure: String(p.structure || '').slice(0, 160),
-          issue: String(p.issue || '无').slice(0, 160)
+          structure: String(p.structure || '').slice(0, 160)
         };
       }) : local.logicReview.paragraphFlow,
       chain: String(lr.chain || local.logicReview.chain).slice(0, 600),
