@@ -605,7 +605,7 @@
     $('logic-thesis').textContent = lr.thesis || '（未能识别中心论点）';
 
     var flow = Array.isArray(lr.paragraphFlow) ? lr.paragraphFlow : [];
-    $('logic-flow').innerHTML = flow.map(function (p) {
+    $('logic-flow').innerHTML = flow.length ? flow.map(function (p) {
       var methods = Array.isArray(p.methods) && p.methods.length ? p.methods.join('·') : '';
       return '<div class="lf-item">' +
         '<div class="lf-head"><span class="lf-para">' + p.para + '</span>' +
@@ -614,9 +614,9 @@
         '<div class="lf-gist">' + str(p.gist, 48) + '</div>' +
         (p.structure ? '<div class="lf-struct">' + str(p.structure, 100) + '</div>' : '') +
         '</div>';
-    }).join('');
+    }).join('') : '<div class="logic-empty">本次未生成逐段结构分析，请重新批改。</div>';
 
-    $('logic-chain').textContent = lr.chain || '暂无论证链条评价。';
+    $('logic-chain').textContent = lr.chain || '本次未生成论证链条评价，请重新批改。';
 
     var falls = Array.isArray(lr.fallacies) ? lr.fallacies : [];
     $('logic-fallacies').innerHTML = falls.length

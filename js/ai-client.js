@@ -236,7 +236,7 @@
 
   /* ---------- 归一化为本地报告结构（70 分制） ---------- */
   function adapt(ai, rawText, opts) {
-    // 统计数据复用本地引擎
+    // 本地模块仅用于：占格字数/段落统计、标题展示、AI 缺总分时的保底分
     var local = EssayEngine.grade(rawText, opts);
     var stats = local.stats;
 
@@ -247,9 +247,10 @@
       var byName = {};
       BANDS.forEach(function (b) { byName[b.name] = b; });
       var fb = byName[String(ai.bandClass || '').replace('卷', '') + '卷'];
-      total = fb ? Math.round((fb.lo + fb.hi) / 2) : 49;
+      total = fb ? Math.round((fb.lo + fb.hi) / 2) : local.total;  // 档位也没有→成篇保底分
     }
-    total = Math.max(3, Math.min(70, total));
+    // 考场字数硬性封顶（含标点占格口径），AI 给分也必须执行
+    total = EssayEngine.applyWordCap(total, rawText);
 
     var band;
     var className = String(ai.bandClass || '');
@@ -317,12 +318,12 @@
 
     var marks = resolveMarks(rawText, ai.marks);
 
-    // —— 文章逻辑评判（AI 为主，缺字段时用本地补齐）——
+    // —— 文章逻辑评判（全部以 AI 返回为准；缺字段给空态，不再用机械规则编造）——
     var lr = ai.logicReview && typeof ai.logicReview === 'object' ? ai.logicReview : {};
     var aiFlow = Array.isArray(lr.paragraphFlow) ? lr.paragraphFlow : [];
     var logicReview = {
-      thesis: String(lr.thesis || local.logicReview.thesis).slice(0, 200),
-      paragraphFlow: aiFlow.length ? aiFlow.slice(0, 12).map(function (p, i) {
+      thesis: String(lr.thesis || '').slice(0, 200),
+      paragraphFlow: aiFlow.slice(0, 12).map(function (p, i) {
         return {
           para: parseInt(p.para, 10) || (i + 1),
           role: String(p.role || '分论点论证').slice(0, 12),
@@ -330,8 +331,8 @@
           methods: Array.isArray(p.methods) ? p.methods.map(function (m) { return String(m).slice(0, 10); }).slice(0, 4) : [],
           structure: String(p.structure || '').slice(0, 160)
         };
-      }) : local.logicReview.paragraphFlow,
-      chain: String(lr.chain || local.logicReview.chain).slice(0, 600),
+      }),
+      chain: String(lr.chain || '').slice(0, 600),
       fallacies: (function () {
         var raw = (Array.isArray(lr.fallacies) ? lr.fallacies : []).map(function (f) {
           var ex = locateExcerpt(f.excerpt, rawText);
@@ -363,11 +364,9 @@
         }).filter(function (w) { return (w.point || w.upgrade) && w.excerpt; });
         return dedupe(raw2, function (w) { return w.point + w.upgrade; }).slice(0, 6);
       })(),
-      strengths: (Array.isArray(lr.strengths) && lr.strengths.length ? lr.strengths : local.logicReview.strengths)
+      strengths: (Array.isArray(lr.strengths) ? lr.strengths : [])
         .map(function (s) { return String(s).slice(0, 160); }).filter(Boolean).slice(0, 4)
     };
-    // AI 明确给出 fallacies（即使为空数组）就以 AI 为准；只有字段缺失才用本地兜底
-    if (!Array.isArray(lr.fallacies) && !logicReview.fallacies.length) logicReview.fallacies = local.logicReview.fallacies;
 
     // —— 逐句改写示范 ——
     var rewrites = (Array.isArray(ai.rewrites) ? ai.rewrites : []).slice(0, 8).map(function (r) {
@@ -378,14 +377,12 @@
         why: String(r.why || '').slice(0, 200)
       };
     }).filter(function (r) { return r.original && r.revised; });
-    if (!rewrites.length) rewrites = local.rewrites;
 
     // —— 逐段修改建议 ——
     var paragraphAdvice = (Array.isArray(ai.paragraphAdvice) ? ai.paragraphAdvice : []).slice(0, 8)
       .map(function (p) {
         return { para: parseInt(p.para, 10) || 0, advice: String(p.advice || '').slice(0, 300) };
       }).filter(function (p) { return p.advice; });
-    if (!paragraphAdvice.length) paragraphAdvice = local.paragraphAdvice;
 
     // 审题契合度：AI 优先返回结构化 {level, detail}，兼容旧版字符串
     var deviation;
@@ -411,18 +408,24 @@
       deviation = local.deviation;
     }
 
+    // AI 结果残缺（无总分也无档位）时走保底分，总评明确标注是临时保底分
+    var aiIntact = !(Math.round(num(ai.total, -1)) < 0 && !ai.bandClass);
+    var fallbackSummary = aiIntact
+      ? '本次批改由 AI 大模型按上海卷五类档标准完成，请结合批注与建议修改作文。'
+      : local.summary;
+
     return {
       total: total,
       band: band,
-      summary: String(ai.summary || '本次批改由 AI 大模型按上海卷五类档标准完成，请结合批注与建议修改作文。').slice(0, 500),
+      summary: String(ai.summary || fallbackSummary).slice(0, 500),
+      engine: aiIntact ? 'ai' : 'fallback',
       deviation: deviation,
       dims: dims, stats: stats, marks: marks,
       logicReview: logicReview,
       rewrites: rewrites,
       paragraphAdvice: paragraphAdvice,
       suggestions: sugs, praises: praises,
-      title: opts.title || local.title || '', type: opts.type,
-      engine: 'ai'
+      title: opts.title || local.title || '', type: opts.type
     };
   }
 
