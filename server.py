@@ -134,6 +134,11 @@ GRADE_SYSTEM_PROMPT = """你是上海市高考语文阅卷组专家，长期批�
 
 【评分流程（必须按此顺序思考）】
 1. 审题：若提供了作文题目材料，先逐词批注（限定词、比较级、隐含前提、手段-目的、充分/必要条件、引号概念），再核对作文：回应了哪些题眼、有无偷换概念、是否只就着某一关键词说开去。把结论写入 deviation。
+   deviation.level 的判定必须与 detail 的结论严格一致（重要：detail 中出现“未偏题”“未偷换概念”“没有脱离材料”等否定性结论时，level 绝不能判 risk）：
+   · fit：审题准确、契合题意，包括“有小瑕疵但不影响立意方向”的情形；
+   · warn：能看出在回应材料，但存在明扣暗离风险、回应题眼不全、概念有轻微窄化等审题瑕疵；
+   · risk：实质偏题/套题、通篇偷换或脱离材料；
+   未提供题目材料时 level 给 warn 并说明无法核查。
 2. 定档：依据分档标准先确定大类，不要先打小分再凑总分。
 3. 档内定位：按思维深度（思辨纵深）、论据与分析的咬合度、语言、字数确定上/中/下及具体分数。
 4. 自检：total 是否落在所判 bandClass 与 bandLevel 对应的分数区间内；是否误用否决项把作文一棍子打死（注意保底与“宁可从宽”门槛）；若 total 低于 52，你是否能从文中明确指出具体硬伤——指不出，说明你压分了，上调到 52 以上再落分；summary、dims 评语与分数是否一致；满分是 70 分。
@@ -240,7 +245,10 @@ GRADE_SYSTEM_PROMPT = """你是上海市高考语文阅卷组专家，长期批�
   "bandClass": "一类卷|二类卷|三类卷|四类卷|五类卷",
   "bandLevel": "上|中|下",
   "summary": "2-4句总评：从论证语言、论证思路、论证手法与思辨深度广度切入，指出最突出的优点与最需改进之处，引用原文关键句，不写空话",
-  "deviation": "审题契合度判断：2-4句，说明作文回应了哪些题眼、有无偏题或偷换概念；未提供题目材料时说明无法核查",
+  "deviation": {
+    "level": "fit|warn|risk",
+    "detail": "审题契合度判断 2-4 句：说明作文回应了哪些题眼、有无偏题或偷换概念；未提供题目材料时 level 给 warn 并说明无法核查"
+  },
   "dims": [
     {"name": "审题立意", "score": 0, "comment": "一句话点评"},
     {"name": "论证层次", "score": 0, "comment": "一句话点评"},
@@ -277,7 +285,7 @@ GRADE_SYSTEM_PROMPT = """你是上海市高考语文阅卷组专家，长期批�
 }"""
 
 
-GRADE_SCHEMA_HINT = """请严格按系统约定的 JSON 结构输出（total 为 70 分制整数；bandClass 为五类卷之一；bandLevel 为上/中/下；dims 固定四项，顺序为 审题立意、论证层次、论据分析、语言表达，score 为 0-100 诊断分且不相加；marks 的 excerpt 必须是原文一字不差的连续片段，type 可取 error/warn/logic/good；必须完整输出 logicReview，其中 fallacies 只收硬伤（0-3 个正常，严禁凑数），weakLinks 给 3-6 处覆盖各主要论证环节的“可加强处”（不扣分），rewrites 5-8 条、paragraphAdvice 必须完整）。只输出 JSON。"""
+GRADE_SCHEMA_HINT = """请严格按系统约定的 JSON 结构输出（total 为 70 分制整数；bandClass 为五类卷之一；bandLevel 为上/中/下；dims 固定四项，顺序为 审题立意、论证层次、论据分析、语言表达，score 为 0-100 诊断分且不相加；deviation 为对象 {level: fit|warn|risk, detail}，level 必须与 detail 的结论一致；marks 的 excerpt 必须是原文一字不差的连续片段，type 可取 error/warn/logic/good；必须完整输出 logicReview，其中 fallacies 只收硬伤（0-3 个正常，严禁凑数），weakLinks 给 3-6 处覆盖各主要论证环节的“可加强处”（不扣分），rewrites 5-8 条、paragraphAdvice 必须完整）。只输出 JSON。"""
 
 
 def build_grade_payload(data):

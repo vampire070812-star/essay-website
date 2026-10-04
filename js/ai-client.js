@@ -322,12 +322,24 @@
       }).filter(function (p) { return p.advice; });
     if (!paragraphAdvice.length) paragraphAdvice = local.paragraphAdvice;
 
-    // 审题契合度：AI 返回字符串说明
+    // 审题契合度：AI 优先返回结构化 {level, detail}，兼容旧版字符串
     var deviation;
-    if (ai.deviation && String(ai.deviation).trim()) {
-      var dTxt = String(ai.deviation).trim().slice(0, 500);
-      var dStatus = /偏题|跑题|偷换|套题|脱离/.test(dTxt) ? 'bad'
-        : (/明扣暗离|瑕疵|片面|未回应|忽略|没有回应/.test(dTxt) ? 'warn' : 'ok');
+    var devRaw = ai.deviation;
+    var devObj = devRaw && typeof devRaw === 'object' ? devRaw : null;
+    var dTxt = String((devObj && devObj.detail) || (typeof devRaw === 'string' ? devRaw : '') || '').trim().slice(0, 500);
+
+    if (dTxt || (devObj && devObj.level)) {
+      var dStatus;
+      if (devObj && /^(fit|warn|risk)$/.test(String(devObj.level))) {
+        // 结构化判定直接采用
+        dStatus = devObj.level === 'fit' ? 'ok' : (devObj.level === 'risk' ? 'bad' : 'warn');
+      } else {
+        // 兼容字符串：先抹掉否定语境（未/没有/无/并非/不构成/未发现 + 风险词），避免“未偷换概念”被误判
+        var negated = dTxt
+          .replace(/(?:未|没有|并无|无|并非|并不|不构成|不存在|未发现|未见|算不上|谈不上|不属(?:于)?|并非是)[^，。；,;]{0,8}(?:偏题|跑题|偷换|套题|脱离|窄化|游离|另起炉灶)/g, '');
+        dStatus = /偏题|跑题|偷换|套题|脱离/.test(negated) ? 'bad'
+          : (/明扣暗离|瑕疵|片面|未回应|忽略|没有回应/.test(negated) ? 'warn' : 'ok');
+      }
       var dLabel = dStatus === 'bad' ? 'AI 判断：有偏题风险' : dStatus === 'warn' ? 'AI 判断：审题有瑕疵' : 'AI 判断：审题契合';
       deviation = { status: dStatus, label: dLabel, detail: dTxt };
     } else {
