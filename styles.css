@@ -343,18 +343,22 @@ textarea {
 }
 .chip b { color: var(--primary); }
 
-/* ============ 四维评分 ============ */
-.dim-list { display: flex; flex-direction: column; gap: 16px; }
-.dim-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
-.dim-name { font-size: 14.5px; font-weight: 600; }
-.dim-score { font-size: 13.5px; color: var(--ink-3); }
-.dim-score b { font-size: 17px; color: var(--ink); }
-.dim-track { height: 9px; background: #f1f3f8; border-radius: 99px; overflow: hidden; }
-.dim-fill {
-  height: 100%; width: 0; border-radius: 99px;
-  transition: width .9s cubic-bezier(.22,.9,.3,1);
+/* ============ 四维诊断（逐维档位 + 详细点评） ============ */
+.dim-list { display: flex; flex-direction: column; gap: 18px; }
+.dim-item {
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px;
+  background: #fcfcfe;
 }
-.dim-comment { font-size: 12.5px; color: var(--ink-3); margin-top: 5px; }
+.dim-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.dim-name { font-size: 15px; font-weight: 700; color: var(--ink); }
+.dim-band {
+  flex-shrink: 0; font-size: 13px; font-weight: 700;
+  border: 1.5px solid; border-radius: 999px; padding: 2px 12px; background: #fff;
+}
+.dim-comment {
+  font-size: 13.5px; color: var(--ink-2); line-height: 1.95;
+  text-align: justify;
+}
 
 /* ============ 报告双栏 ============ */
 .report-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; }
@@ -565,15 +569,6 @@ textarea {
 .dev-detail { font-size: 14px; color: var(--ink-2); line-height: 1.8; }
 
 .dim-note { font-size: 12px; font-weight: 400; color: var(--ink-3); margin-left: 8px; }
-.dim-level {
-  font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 5px;
-  margin-left: 8px; color: #fff;
-}
-.dim-level.lv-强 { background: #059669; }
-.dim-level.lv-较强 { background: #2563eb; }
-.dim-level.lv-中 { background: #d97706; }
-.dim-level.lv-较弱 { background: #ea580c; }
-.dim-level.lv-弱 { background: #dc2626; }
 
 /* ============ 报告：逻辑评判 ============ */
 .logic-card { border-top: 3px solid #9333ea; }

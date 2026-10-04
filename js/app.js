@@ -544,14 +544,13 @@
     ds.className = 'dev-status ' + (dev.status || 'none');
     $('dev-detail').textContent = dev.detail || '';
 
-    // 诊断四维（不加总）
+    // 诊断四维（逐维独立档位 + 详细点评，不加分）
     $('dim-list').innerHTML = r.dims.map(function (d) {
-      var pct = Math.round(d.score / d.max * 100);
+      var color = d.color || r.band.color;
       return '<div class="dim-item">' +
-        '<div class="dim-top"><span class="dim-name">' + d.name +
-          '<span class="dim-level lv-' + d.level + '">' + d.level + '</span></span>' +
-        '<span class="dim-score"><b style="color:' + r.band.color + '">' + d.score + '</b> / 100</span></div>' +
-        '<div class="dim-track"><div class="dim-fill" data-w="' + pct + '" style="background:' + r.band.color + '"></div></div>' +
+        '<div class="dim-top"><span class="dim-name">' + d.name + '</span>' +
+        '<span class="dim-band" style="color:' + color + ';border-color:' + color + '">' +
+        d.band + ' · ' + d.sub + '水平</span></div>' +
         '<div class="dim-comment">' + escapeHtml(d.tip) + '</div>' +
         '</div>';
     }).join('');
@@ -587,9 +586,6 @@
     setTimeout(function () {
       ring.style.strokeDashoffset = C * (1 - r.total / 70);
       animateNumber($('total-score'), r.total, 1000);
-      document.querySelectorAll('.dim-fill').forEach(function (el) {
-        el.style.width = el.dataset.w + '%';
-      });
     }, 120);
   }
 

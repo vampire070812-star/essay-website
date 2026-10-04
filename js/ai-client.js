@@ -237,7 +237,7 @@
     var scoreBand = bandFromScore(total);
     if (scoreBand.label !== band.label) band = scoreBand;
 
-    // 诊断四维
+    // 诊断四维：逐维独立档位（几类卷·上/中/下）+ 详细点评
     var aiDims = Array.isArray(ai.dims) ? ai.dims : [];
     var dims = DIM_META.map(function (meta, i) {
       var hitDim = aiDims[i];
@@ -248,10 +248,29 @@
             (meta.key === 'evidence' && /论据|素材|分析/.test(nm)) ||
             (meta.key === 'lang' && /语言|表达|语句|文采/.test(nm))) { hitDim = aiDims[j]; break; }
       }
-      var score = hitDim ? Math.round(num(hitDim.score, 60)) : 60;
-      score = Math.max(5, Math.min(98, score));
+      // 档位：优先用 AI 给的 band/sub；兼容旧版数字 score（换算成档位）；都没有则跟随总分档位
+      var bandInfo = null;
+      if (hitDim && hitDim.band) {
+        var bName = String(hitDim.band).replace(/\s/g, '');
+        var found = null;
+        for (var k = 0; k < BANDS.length; k++) {
+          // 兼容“一类卷”全称与“一类”简写
+          if (bName.indexOf(BANDS[k].name) >= 0 || bName.indexOf(BANDS[k].name.slice(0, 2)) === 0) { found = BANDS[k]; break; }
+        }
+        if (found) {
+          var sub = /^(上|中|下)$/.test(String(hitDim.sub || '')) ? hitDim.sub : '中';
+          bandInfo = { label: found.name, sub: sub, color: found.color };
+        }
+      }
+      if (!bandInfo && hitDim && typeof hitDim.score !== 'undefined' && hitDim.score !== null && hitDim.score !== '') {
+        // 旧格式兼容：0-100 诊断分按 70 分制比例换算成档位
+        var scaled = Math.round(num(hitDim.score, 60) / 100 * 70);
+        var b0 = bandFromScore(Math.max(0, Math.min(70, scaled)));
+        bandInfo = { label: b0.label, sub: b0.sub, color: b0.color };
+      }
+      if (!bandInfo) bandInfo = { label: band.label, sub: band.sub, color: band.color };
       var comment = hitDim && hitDim.comment ? String(hitDim.comment) : meta.tip;
-      return { key: meta.key, name: meta.name, score: score, max: 100, level: levelOf(score), tip: comment };
+      return { key: meta.key, name: meta.name, band: bandInfo.label, sub: bandInfo.sub, color: bandInfo.color, tip: comment };
     });
 
     var sugs = (Array.isArray(ai.suggestions) ? ai.suggestions : []).slice(0, 10)
