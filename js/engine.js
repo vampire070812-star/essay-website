@@ -10,6 +10,8 @@
   'use strict';
 
   function cjkLen(s) { return (s.match(/[一-龥]/g) || []).length; }
+  // 考场占格字数：汉字与标点均占一格，空白不计（对齐高考阅卷的字数口径）
+  function gridLen(s) { return String(s || '').replace(/\s/g, '').length; }
   function uniq(a) {
     var seen = {}, out = [];
     for (var i = 0; i < a.length; i++) if (!seen[a[i]]) { seen[a[i]] = 1; out.push(a[i]); }
@@ -1298,5 +1300,5 @@
     return html;
   }
 
-  global.EssayEngine = { grade: grade, renderAnnotated: renderAnnotated, cjkLen: cjkLen };
+  global.EssayEngine = { grade: grade, renderAnnotated: renderAnnotated, cjkLen: cjkLen, gridLen: gridLen };
 })(window);

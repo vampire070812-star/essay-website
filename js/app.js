@@ -87,8 +87,8 @@
   var gradingTimer = null;
   var serverCfg = null;
 
-  /* ---------- 字数统计 ---------- */
-  function updateCount() { countEl.textContent = EssayEngine.cjkLen(textEl.value); }
+  /* ---------- 字数统计（考场占格口径：汉字与标点均占一格） ---------- */
+  function updateCount() { countEl.textContent = EssayEngine.gridLen(textEl.value); }
   textEl.addEventListener('input', function () {
     updateCount();
     tipEl.textContent = '';
@@ -336,15 +336,18 @@
       var best = /一类|一类立意/.test(String(a.level)) || i === arr(r.angles).length - 1;
       var chain = '';
       if (Array.isArray(a.logicChain) && a.logicChain.length) {
-        chain = '<ol class="al-chain">' + a.logicChain.map(function (s) {
-          return '<li>' + str(s, 200) + '</li>';
-        }).join('') + '</ol>';
+        chain = '<div class="al-label">思维逻辑链（怎么一步步推出来的）</div>' +
+          '<ol class="al-chain">' + a.logicChain.map(function (s) {
+            return '<li>' + str(s, 200) + '</li>';
+          }).join('') + '</ol>';
       }
       return '<div class="ar-angle' + (best ? ' best' : '') + '">' +
-        '<span class="al-name">' + str(a.name, 40) + '</span>' +
-        '<span class="al-level">' + str(a.level, 30) + '</span>' +
+        '<div class="al-head"><span class="al-name">' + str(a.name, 40) + '</span>' +
+        '<span class="al-level">' + str(a.level, 30) + '</span></div>' +
+        '<div class="al-label">中心论点</div>' +
         '<span class="al-stand">' + str(a.stand, 260) + '</span>' +
         chain +
+        '<div class="al-label">定位与点评</div>' +
         '<span class="al-eval">' + str(a.evaluation, 300) + '</span></div>';
     }).join('');
 
@@ -368,7 +371,7 @@
       '<div class="ar-section"><h4>材料真正要回答的问题</h4><div class="ar-question">' + str(r.coreQuestion, 300) + '</div></div>' +
       (concepts ? '<div class="ar-section"><h4>核心概念界定</h4><div class="ar-concepts">' + concepts + '</div></div>' : '') +
       (keys ? '<div class="ar-section"><h4>题眼逐词批注</h4><ul class="ar-keys">' + keys + '</ul></div>' : '') +
-      (angles ? '<div class="ar-section"><h4>立意层次（思维递进）</h4><div class="ar-angles">' + angles + '</div></div>' : '') +
+      (angles ? '<div class="ar-section"><h4>审题思路（多角度并列，按潜力排序）</h4><div class="ar-angles">' + angles + '</div></div>' : '') +
       (outline ? '<div class="ar-section"><h4>层进式参考提纲</h4><ol class="ar-outline">' + outline + '</ol></div>' : '') +
       (risks ? '<div class="ar-section"><h4>偏题风险清单</h4><ul class="ar-risks">' + risks + '</ul></div>' : '');
 
@@ -532,17 +535,7 @@
     $('report-title').textContent = r.title ? '《' + r.title + '》批改报告' : '作文批改报告';
     $('report-summary').textContent = r.summary;
 
-    var st = r.stats;
-    var chips = [
-      '字数 <b>' + st.chars + '</b> / ' + st.target,
-      '段落 <b>' + st.paragraphs + '</b>',
-      '句子 <b>' + st.sentences + '</b>',
-      '辩证层次 <b>' + st.dialectic + '</b>/2',
-      '例证 <b>' + (st.examples || 0) + '</b> · 分析 <b>' + (st.analysis || 0) + '</b>',
-      '成语 <b>' + st.idioms + '</b>',
-      '批注 <b>' + r.marks.length + '</b> 处'
-    ];
-    $('stat-chips').innerHTML = chips.map(function (c) { return '<span class="chip">' + c + '</span>'; }).join('');
+    // 机械指标条（字数/段落/例证数等）已取消：评分从整体论证质量感受出发
 
     // 审题契合度
     var dev = r.deviation || { status: 'none', label: '未核查', detail: '' };
