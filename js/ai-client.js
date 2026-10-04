@@ -204,6 +204,36 @@
     return isFinite(n) ? n : fallback;
   }
 
+  // 校验/修复 AI 给出的引文：必须能在原文中定位；
+  // 若整体匹配失败（多为边界多带/少带了字），尝试在两端各裁掉 1-4 字找回最长真实片段
+  function locateExcerpt(excerpt, raw) {
+    var ex = String(excerpt || '').trim();
+    if (!ex || !raw) return '';
+    if (raw.indexOf(ex) >= 0) return ex;
+    var best = '';
+    for (var l = 0; l <= 4; l++) {
+      for (var t = 0; t <= 4; t++) {
+        if (l + t === 0) continue;
+        var core = ex.slice(l, ex.length - t);
+        if (core.length >= 8 && raw.indexOf(core) >= 0 && core.length > best.length) best = core;
+      }
+    }
+    return best;
+  }
+
+  // 清单去重：按 keyFn 判重（解释文字模板化复用时只保留引文更长的一条）
+  function dedupe(list, keyFn) {
+    var seen = {};
+    var out = [];
+    list.forEach(function (item) {
+      var key = keyFn(item).replace(/\s/g, '');
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(item);
+    });
+    return out;
+  }
+
   /* ---------- 归一化为本地报告结构（70 分制） ---------- */
   function adapt(ai, rawText, opts) {
     // 统计数据复用本地引擎
@@ -302,25 +332,42 @@
         };
       }) : local.logicReview.paragraphFlow,
       chain: String(lr.chain || local.logicReview.chain).slice(0, 600),
-      fallacies: (Array.isArray(lr.fallacies) ? lr.fallacies : []).slice(0, 10).map(function (f) {
-        return {
-          name: String(f.name || '逻辑问题').slice(0, 20),
-          excerpt: String(f.excerpt || '').slice(0, 80),
-          why: String(f.why || '').slice(0, 200)
-        };
-      }).filter(function (f) { return f.why || f.excerpt; }),
-      weakLinks: (Array.isArray(lr.weakLinks) ? lr.weakLinks : []).slice(0, 8).map(function (w) {
-        return {
-          type: String(w.type || '可加强处').slice(0, 14),
-          excerpt: String(w.excerpt || '').slice(0, 80),
-          point: String(w.point || '').slice(0, 200),
-          upgrade: String(w.upgrade || '').slice(0, 240)
-        };
-      }).filter(function (w) { return w.point || w.upgrade; }),
+      fallacies: (function () {
+        var raw = (Array.isArray(lr.fallacies) ? lr.fallacies : []).map(function (f) {
+          var ex = locateExcerpt(f.excerpt, rawText);
+          return {
+            name: String(f.name || '逻辑问题').slice(0, 20),
+            excerpt: ex,
+            why: String(f.why || '').trim().slice(0, 280)
+          };
+        }).filter(function (f) { return f.why && f.excerpt; });
+        // why 雷同（模板复用）只保留一条；同名且引文互相包含只保留更长的一条
+        var byWhy = dedupe(raw, function (f) { return f.why; });
+        var out = [];
+        byWhy.forEach(function (f) {
+          var dup = out.some(function (o) {
+            return o.name === f.name && (o.excerpt.indexOf(f.excerpt) >= 0 || f.excerpt.indexOf(o.excerpt) >= 0);
+          });
+          if (!dup) out.push(f);
+        });
+        return out.slice(0, 3); // 硬伤 0-3 个
+      })(),
+      weakLinks: (function () {
+        var raw2 = (Array.isArray(lr.weakLinks) ? lr.weakLinks : []).map(function (w) {
+          return {
+            type: String(w.type || '可加强处').slice(0, 14),
+            excerpt: locateExcerpt(w.excerpt, rawText),
+            point: String(w.point || '').trim().slice(0, 220),
+            upgrade: String(w.upgrade || '').trim().slice(0, 280)
+          };
+        }).filter(function (w) { return (w.point || w.upgrade) && w.excerpt; });
+        return dedupe(raw2, function (w) { return w.point + w.upgrade; }).slice(0, 6);
+      })(),
       strengths: (Array.isArray(lr.strengths) && lr.strengths.length ? lr.strengths : local.logicReview.strengths)
         .map(function (s) { return String(s).slice(0, 160); }).filter(Boolean).slice(0, 4)
     };
-    if (!logicReview.fallacies.length) logicReview.fallacies = local.logicReview.fallacies;
+    // AI 明确给出 fallacies（即使为空数组）就以 AI 为准；只有字段缺失才用本地兜底
+    if (!Array.isArray(lr.fallacies) && !logicReview.fallacies.length) logicReview.fallacies = local.logicReview.fallacies;
 
     // —— 逐句改写示范 ——
     var rewrites = (Array.isArray(ai.rewrites) ? ai.rewrites : []).slice(0, 8).map(function (r) {
