@@ -634,6 +634,29 @@ textarea {
 }
 .logic-empty { font-size: 13px; color: var(--ink-3); }
 
+/* 逻辑谬误/亮点标题上的定性小标签 */
+.logic-tag {
+  font-size: 11px; font-weight: 400; color: #b91c1c; background: #fee2e2;
+  border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle;
+}
+.logic-tag.tag-weak { color: #1d4ed8; background: #dbeafe; }
+
+/* 论证可加强处：中性蓝，明确不是错误 */
+.logic-weak { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.logic-weak h4 { font-size: 13px; margin-bottom: 10px; color: var(--ink-2); }
+.logic-weak ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.wl-item {
+  border: 1px solid #bfdbfe; border-left: 3px solid #3b82f6; border-radius: 8px;
+  background: #f8fbff; padding: 8px 12px; font-size: 13px; line-height: 1.7;
+}
+.wl-type {
+  display: inline-block; font-size: 11px; font-weight: 700; color: #fff;
+  background: #3b82f6; border-radius: 4px; padding: 1px 7px; margin-right: 6px;
+}
+.wl-excerpt { color: var(--ink); background: #eff6ff; border-radius: 4px; padding: 0 4px; }
+.wl-point { display: block; color: var(--ink-2); margin-top: 3px; }
+.wl-upgrade { display: block; color: #1d4ed8; font-size: 12.5px; margin-top: 2px; }
+
 /* ============ 报告：逐句改写示范 ============ */
 .rewrite-card { border-top: 3px solid #2563eb; }
 .rewrite-list { display: flex; flex-direction: column; gap: 14px; }
@@ -733,7 +756,7 @@ textarea {
     margin-bottom: 12px; padding: 14px 16px;
   }
   /* 仅小单元（标题、单条建议/改写、链条节点、维度条）不被拦腰截断 */
-  .block-title, .sug-item, .praise-item, .rw-item, .lf-item, .fal-item,
+  .block-title, .sug-item, .praise-item, .rw-item, .lf-item, .fal-item, .wl-item,
   .dim-item, .logic-thesis, .logic-chain, .ar-angle {
     break-inside: avoid; page-break-inside: avoid;
   }

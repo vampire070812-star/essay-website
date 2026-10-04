@@ -277,11 +277,13 @@
         return {
           para: parseInt(p.para, 10) || (i + 1),
           role: String(p.role || '分论点论证').slice(0, 12),
-          gist: String(p.gist || '').slice(0, 60),
-          issue: String(p.issue || '无').slice(0, 120)
+          gist: String(p.gist || '').slice(0, 80),
+          methods: Array.isArray(p.methods) ? p.methods.map(function (m) { return String(m).slice(0, 10); }).slice(0, 4) : [],
+          structure: String(p.structure || '').slice(0, 160),
+          issue: String(p.issue || '无').slice(0, 160)
         };
       }) : local.logicReview.paragraphFlow,
-      chain: String(lr.chain || local.logicReview.chain).slice(0, 500),
+      chain: String(lr.chain || local.logicReview.chain).slice(0, 600),
       fallacies: (Array.isArray(lr.fallacies) ? lr.fallacies : []).slice(0, 10).map(function (f) {
         return {
           name: String(f.name || '逻辑问题').slice(0, 20),
@@ -289,8 +291,16 @@
           why: String(f.why || '').slice(0, 200)
         };
       }).filter(function (f) { return f.why || f.excerpt; }),
+      weakLinks: (Array.isArray(lr.weakLinks) ? lr.weakLinks : []).slice(0, 8).map(function (w) {
+        return {
+          type: String(w.type || '可加强处').slice(0, 14),
+          excerpt: String(w.excerpt || '').slice(0, 80),
+          point: String(w.point || '').slice(0, 200),
+          upgrade: String(w.upgrade || '').slice(0, 240)
+        };
+      }).filter(function (w) { return w.point || w.upgrade; }),
       strengths: (Array.isArray(lr.strengths) && lr.strengths.length ? lr.strengths : local.logicReview.strengths)
-        .map(function (s) { return String(s).slice(0, 140); }).filter(Boolean).slice(0, 3)
+        .map(function (s) { return String(s).slice(0, 160); }).filter(Boolean).slice(0, 4)
     };
     if (!logicReview.fallacies.length) logicReview.fallacies = local.logicReview.fallacies;
 

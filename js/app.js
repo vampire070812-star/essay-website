@@ -637,6 +637,18 @@
     $('logic-strengths').innerHTML = sts.length
       ? sts.map(function (s) { return '<li>' + str(s, 120) + '</li>'; }).join('')
       : '<li class="logic-empty">逻辑亮点暂不明显，先从“让步—转折”补起。</li>';
+
+    var wls = Array.isArray(lr.weakLinks) ? lr.weakLinks : [];
+    $('logic-weaklinks').innerHTML = wls.length
+      ? wls.map(function (w) {
+        return '<li class="wl-item">' +
+          '<span class="wl-type">' + str(w.type, 12) + '</span>' +
+          (w.excerpt ? '<span class="wl-excerpt">“' + str(w.excerpt, 60) + '”</span>' : '') +
+          (w.point ? '<span class="wl-point">' + str(w.point, 160) + '</span>' : '') +
+          (w.upgrade ? '<span class="wl-upgrade">↳ ' + str(w.upgrade, 200) + '</span>' : '') +
+          '</li>';
+      }).join('')
+      : '<li class="logic-empty">本篇各主要论证环节都比较扎实，暂无明显的可加强处。</li>';
   }
 
   /* ---------- 逐句改写示范渲染 ---------- */

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split13" />
+<link rel="stylesheet" href="styles.css?v=split14" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -218,7 +218,7 @@
 
     <!-- 文章逻辑评判 -->
     <div class="card logic-card">
-      <h3 class="block-title"><span class="title-bar"></span>文章逻辑评判<span class="dim-note">（中心论点 · 段落功能 · 论证链 · 逻辑谬误）</span></h3>
+      <h3 class="block-title"><span class="title-bar"></span>文章逻辑评判<span class="dim-note">（中心论点 · 段落功能 · 论证链 · 谬误与可加强处）</span></h3>
       <div class="logic-thesis">
         <span class="lt-label">中心论点</span>
         <p id="logic-thesis"></p>
@@ -230,13 +230,17 @@
       </div>
       <div class="logic-cols">
         <div class="logic-fallacies">
-          <h4>⚠ 逻辑谬误 / 断链处</h4>
+          <h4>⚠ 逻辑谬误 / 断链处<span class="logic-tag">硬伤 · 影响分数</span></h4>
           <ul id="logic-fallacies"></ul>
         </div>
         <div class="logic-strengths">
           <h4>✓ 逻辑亮点</h4>
           <ul id="logic-strengths"></ul>
         </div>
+      </div>
+      <div class="logic-weak">
+        <h4>🔍 论证可加强处<span class="logic-tag tag-weak">不是错误 · 不扣分 · 改了更强</span></h4>
+        <ul id="logic-weaklinks"></ul>
       </div>
     </div>
 
@@ -318,9 +322,9 @@
   </div>
 </div>
 
-<script src="js/file-upload.js?v=split13"></script>
-<script src="js/engine.js?v=split13"></script>
-<script src="js/ai-client.js?v=split13"></script>
-<script src="js/app.js?v=split13"></script>
+<script src="js/file-upload.js?v=split14"></script>
+<script src="js/engine.js?v=split14"></script>
+<script src="js/ai-client.js?v=split14"></script>
+<script src="js/app.js?v=split14"></script>
 </body>
 </html>
