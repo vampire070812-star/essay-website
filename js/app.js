@@ -359,6 +359,37 @@
       return '<li>' + str(x, 240) + '</li>';
     }).join('');
 
+    // 思辨路径分析（写作前思维地图）
+    var dgHtml = '';
+    var dg = r.dialecticGuide && typeof r.dialecticGuide === 'object' ? r.dialecticGuide : null;
+    if (dg) {
+      var lp = arr(dg.ladderPath).map(function (p) {
+        return '<div class="dg-step">' +
+          '<div class="dg-step-head"><span class="dg-num">' + str(p.step, 2) + '</span>' +
+          '<b>' + str(p.name, 8) + '</b></div>' +
+          (p.question ? '<p><span class="dg-k">追问</span>' + str(p.question, 200) + '</p>' : '') +
+          (p.move ? '<p><span class="dg-k">怎么想</span>' + str(p.move, 300) + '</p>' : '') +
+          (p.fake ? '<p class="dg-fake"><span class="dg-k">伪推进</span>' + str(p.fake, 300) + '</p>' : '') +
+          (p.keySentence ? '<p class="dg-ks"><span class="dg-k">可写句</span>' + str(p.keySentence, 200) + '</p>' : '') +
+          '</div>';
+      }).join('');
+      var brk = dg.breakthrough && typeof dg.breakthrough === 'object' ? dg.breakthrough : {};
+      dgHtml =
+        '<div class="ar-section ar-dialectic">' +
+          '<h4>🧭 思辨路径分析<span class="dg-h-sub">写作前的思维地图 · 上海卷分档关键</span></h4>' +
+          (dg.tension ? '<div class="dg-tension"><span class="dg-k">本题张力</span>' +
+            str(dg.tension, 420) + '</div>' : '') +
+          (lp ? '<div class="dg-ladder">' + lp + '</div>' : '') +
+          (dg.stickingPoint ? '<p class="dg-stick"><span class="dg-k">多数人的卡点</span>' +
+            str(dg.stickingPoint, 300) + '</p>' : '') +
+          ((brk.question || brk.sample) ? '<div class="dg-break">' +
+            (brk.question ? '<p><span class="dg-k">关键一跃 · 追问</span>' + str(brk.question, 200) + '</p>' : '') +
+            (brk.tool ? '<p><span class="dg-k">思辨动作</span>' + str(brk.tool, 20) + '</p>' : '') +
+            (brk.sample ? '<p class="dg-sample"><span class="dg-k">示例句</span>' + str(brk.sample, 300) + '</p>' : '') +
+            '</div>' : '') +
+        '</div>';
+    }
+
     var html =
       '<div class="ar-head">' +
         '<h3>审题指导</h3>' +
@@ -371,6 +402,7 @@
       '<div class="ar-section"><h4>材料真正要回答的问题</h4><div class="ar-question">' + str(r.coreQuestion, 300) + '</div></div>' +
       (concepts ? '<div class="ar-section"><h4>核心概念界定</h4><div class="ar-concepts">' + concepts + '</div></div>' : '') +
       (keys ? '<div class="ar-section"><h4>题眼逐词批注</h4><ul class="ar-keys">' + keys + '</ul></div>' : '') +
+      dgHtml +
       (angles ? '<div class="ar-section"><h4>审题思路（多角度并列，按潜力排序）</h4><div class="ar-angles">' + angles + '</div></div>' : '') +
       (outline ? '<div class="ar-section"><h4>层进式参考提纲</h4><ol class="ar-outline">' + outline + '</ol></div>' : '') +
       (risks ? '<div class="ar-section"><h4>偏题风险清单</h4><ul class="ar-risks">' + risks + '</ul></div>' : '');
@@ -559,6 +591,8 @@
 
     // 文章逻辑评判
     renderLogic(r.logicReview || {});
+    // 思辨水平评析
+    renderDialectic(r.dialecticReview || {});
     // 逐句修改示范
     renderRewrites(r.rewrites || []);
     // 逐段修改建议
@@ -649,6 +683,43 @@
       : '<li class="logic-empty">本篇各主要论证环节都比较扎实，暂无明显需要调整之处。</li>';
   }
 
+  /* ---------- 思辨水平评析渲染 ---------- */
+  function renderDialectic(dr) {
+    var ladder = Array.isArray(dr.ladder) ? dr.ladder : [];
+    $('dc-ladder').innerHTML = ladder.length ? ladder.map(function (s) {
+      var st = s.status === '达到' ? 'reached' : (s.status === '形式化' ? 'formal' : 'none');
+      return '<div class="dc-step ' + st + '">' +
+        '<div class="dc-step-head"><span class="dc-step-num">' + s.step + '</span>' +
+        '<span class="dc-step-name">' + str(s.name, 8) + '</span>' +
+        '<span class="dc-step-status">' + str(s.status, 4) + '</span></div>' +
+        (s.evidence ? '<div class="dc-step-ev">“' + str(s.evidence, 48) + '”</div>' : '') +
+        (s.analysis ? '<div class="dc-step-an"><span class="dc-mini-label">细评</span>' +
+          str(s.analysis, 320) + '</div>' : '') +
+        (s.suggestion ? '<div class="dc-step-sg"><span class="dc-mini-label">建议</span>' +
+          str(s.suggestion, 240) + '</div>' : '') +
+        '</div>';
+    }).join('') : '<p class="logic-empty">本次未生成思辨层次定位，请重新批改。</p>';
+
+    $('dc-highest').textContent = dr.highest || '本次未生成当前层次';
+    $('dc-hc').textContent = dr.highestComment || '';
+
+    var nm = dr.nextMove || {};
+    $('dc-question').textContent = nm.question || '（未生成下一步追问）';
+    $('dc-tool').innerHTML = nm.tool ? '<b>思辨动作：</b>' + escapeHtml(nm.tool) : '';
+    $('dc-anchor').innerHTML = nm.anchor ? '<b>落点：</b>' + escapeHtml(nm.anchor) : '';
+    $('dc-sample').innerHTML = nm.sample ? '<b>示例句：</b>' + escapeHtml(nm.sample) : '';
+
+    var bd = dr.breadth || {};
+    var cov = Array.isArray(bd.covered) ? bd.covered : [];
+    $('dc-covered').innerHTML = cov.length
+      ? cov.map(function (c) { return '<span class="dc-chip">' + str(c, 14) + '</span>'; }).join('')
+      : '<span class="dc-chip-empty">未明确标注</span>';
+    $('dc-missing').textContent = bd.missing || '无明显缺角';
+    $('dc-bcomment').textContent = bd.comment || '';
+
+    $('dc-overall').textContent = dr.overall || '';
+  }
+
   /* ---------- 逐句改写示范渲染 ---------- */
   function renderRewrites(list) {
     $('rewrite-list').innerHTML = list.length
@@ -677,7 +748,7 @@
     var base = title.replace(/[《》]/g, '').replace(/批改报告/g, '').trim();
     document.title = (base && base !== '作文批改报告') ? base + '批改报告' : '作文批改报告';
     // 临时展开滚动区域（纵向高度限制 + 段落功能链横向滚动）
-    var expandSel = '.essay-view, .modal-body, .logic-flow, .rewrite-list';
+    var expandSel = '.essay-view, .modal-body, .logic-flow, .rewrite-list, .dc-ladder';
     document.querySelectorAll(expandSel).forEach(function (el) {
       el.style.maxHeight = 'none';
       el.style.overflow = 'visible';

@@ -368,6 +368,55 @@
         .map(function (s) { return String(s).slice(0, 160); }).filter(Boolean).slice(0, 4)
     };
 
+    // —— 思辨水平评析（五层定位 / 下一步 / 广度 / 工具）——
+    var dr0 = ai.dialecticReview && typeof ai.dialecticReview === 'object' ? ai.dialecticReview : {};
+    var LADDER_NAMES = ['', '常识立足', '边界审视', '因果追问', '立场对调', '本质升华'];
+    var dialecticReview = {
+      ladder: (function () {
+        var raw = Array.isArray(dr0.ladder) ? dr0.ladder : [];
+        var out = [];
+        for (var i = 1; i <= 5; i++) {
+          var hit = null;
+          for (var j = 0; j < raw.length; j++) {
+            if (parseInt(raw[j].step, 10) === i) { hit = raw[j]; break; }
+          }
+          if (!hit) hit = { step: i, name: LADDER_NAMES[i], status: '未达到' };
+          var st = (hit.status === '达到' || hit.status === '形式化' || hit.status === '未达到')
+            ? hit.status : '未达到';
+          out.push({
+            step: i,
+            name: String(hit.name || LADDER_NAMES[i]).slice(0, 8),
+            status: st,
+            evidence: hit.evidence ? locateExcerpt(hit.evidence, rawText) : '',
+            analysis: String(hit.analysis || '').slice(0, 400),
+            suggestion: String(hit.suggestion || '').slice(0, 300)
+          });
+        }
+        return out;
+      })(),
+      highest: String(dr0.highest || '').slice(0, 60),
+      highestComment: String(dr0.highestComment || '').slice(0, 400),
+      nextMove: (function () {
+        var nm = dr0.nextMove && typeof dr0.nextMove === 'object' ? dr0.nextMove : {};
+        return {
+          question: String(nm.question || '').slice(0, 200),
+          tool: String(nm.tool || '').slice(0, 12),
+          anchor: String(nm.anchor || '').slice(0, 200),
+          sample: String(nm.sample || '').slice(0, 300)
+        };
+      })(),
+      breadth: (function () {
+        var bd = dr0.breadth && typeof dr0.breadth === 'object' ? dr0.breadth : {};
+        return {
+          covered: Array.isArray(bd.covered)
+            ? bd.covered.map(function (c) { return String(c).slice(0, 20); }).slice(0, 7) : [],
+          missing: String(bd.missing || '').slice(0, 120),
+          comment: String(bd.comment || '').slice(0, 300)
+        };
+      })(),
+      overall: String(dr0.overall || '').slice(0, 600)
+    };
+
     // —— 逐句改写示范 ——
     var rewrites = (Array.isArray(ai.rewrites) ? ai.rewrites : []).slice(0, 8).map(function (r) {
       return {
@@ -422,6 +471,7 @@
       deviation: deviation,
       dims: dims, stats: stats, marks: marks,
       logicReview: logicReview,
+      dialecticReview: dialecticReview,
       rewrites: rewrites,
       paragraphAdvice: paragraphAdvice,
       suggestions: sugs, praises: praises,

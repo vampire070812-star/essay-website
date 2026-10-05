@@ -499,6 +499,52 @@ textarea {
   border-radius: 8px; padding: 8px 12px;
 }
 .ar-keys li b { color: #5b21b6; }
+/* —— 思辨路径分析（写前思维地图 · 重点卡）—— */
+.ar-dialectic {
+  border: 1px solid #99f6e4; border-radius: 12px;
+  background: linear-gradient(180deg, #f0fdfa, #fcfeff);
+  padding: 12px 14px 6px;
+}
+.ar-section.ar-dialectic h4 { color: #115e59; }
+.ar-section.ar-dialectic h4::before { background: #0d9488; }
+.dg-h-sub { font-size: 11px; font-weight: 400; color: var(--ink-3); margin-left: 2px; }
+.dg-k {
+  display: inline-block; min-width: 50px; font-size: 10.5px; font-weight: 700;
+  color: #0f766e; background: #ccfbf1; border-radius: 4px;
+  padding: 0 6px; margin-right: 7px; text-align: center;
+}
+.dg-tension {
+  background: #fff; border: 1px solid #99f6e4; border-radius: 8px;
+  padding: 9px 12px; margin-bottom: 10px; font-size: 13px;
+  color: var(--ink-2); line-height: 1.8;
+}
+.dg-ladder { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.dg-step {
+  background: #fff; border: 1px solid #bfeee8; border-radius: 10px; padding: 9px 12px;
+}
+.dg-step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.dg-num {
+  font-size: 11px; font-weight: 700; color: #fff; background: #0d9488;
+  width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center;
+}
+.dg-step-head b { font-size: 13px; color: var(--ink); }
+.dg-step p { margin: 3px 0; font-size: 12.5px; line-height: 1.75; color: var(--ink-2); }
+.dg-step p.dg-fake { color: #b45309; background: #fffbeb; border-radius: 6px; padding: 4px 8px; }
+.dg-fake .dg-k { color: #b45309; background: #fef3c7; }
+.dg-step p.dg-ks { color: #0f766e; background: #ecfdf5; border-radius: 6px; padding: 4px 8px; }
+.dg-stick {
+  background: #fff; border: 1px dashed #fcd34d; border-radius: 8px;
+  padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
+  color: #92400e; line-height: 1.8;
+}
+.dg-stick .dg-k { color: #b45309; background: #fef3c7; }
+.dg-break {
+  border: 1px solid #99f6e4; border-left: 3px solid #0d9488; border-radius: 8px;
+  background: #f5fffd; padding: 9px 12px; margin-bottom: 8px;
+}
+.dg-break p { margin: 3px 0; font-size: 13px; line-height: 1.8; }
+.dg-break p.dg-sample { color: #0f766e; }
+
 .ar-angles { display: flex; flex-direction: column; gap: 10px; }
 .ar-angle {
   border: 1px solid var(--line); border-radius: 10px; padding: 12px 15px; background: #fff;
@@ -652,6 +698,104 @@ textarea {
 .wl-item.wl-del .wl-excerpt { background: #fef3c7; }
 .wl-item.wl-del .wl-upgrade { color: #b45309; }
 
+/* ============ 报告：思辨水平评析 ============ */
+.dialectic-card { border-top: 3px solid #0d9488; }
+
+/* 五层递进 ladder */
+.dc-ladder {
+  display: flex; gap: 8px; overflow-x: auto; padding: 10px 2px 14px;
+  margin-bottom: 14px; border-bottom: 1px dashed var(--line);
+}
+.dc-step {
+  flex: 0 0 auto; min-width: 248px; max-width: 300px; position: relative;
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: #f7f7f8;
+}
+.dc-step:not(:last-child)::after {
+  content: "→"; position: absolute; right: -11px; top: 22px;
+  color: #0d9488; font-weight: 700; z-index: 1;
+}
+.dc-step.reached { background: #f0fdfa; border-color: #5eead4; }
+.dc-step.formal { background: #fffbeb; border-color: #fcd34d; }
+.dc-step.none { opacity: .9; }
+.dc-step-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.dc-step-num {
+  font-size: 11px; font-weight: 700; color: #fff; background: #9ca3af;
+  width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+}
+.dc-step.reached .dc-step-num { background: #0d9488; }
+.dc-step.formal .dc-step-num { background: #d97706; }
+.dc-step-name { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.dc-step-status { margin-left: auto; font-size: 10.5px; color: var(--ink-3); }
+.dc-step.reached .dc-step-status { color: #0f766e; }
+.dc-step.formal .dc-step-status { color: #b45309; }
+.dc-step-ev {
+  font-size: 11px; color: #0f766e; background: #ccfbf1;
+  border-radius: 5px; padding: 3px 6px; line-height: 1.5;
+}
+.dc-step.formal .dc-step-ev { color: #b45309; background: #fef3c7; }
+.dc-mini-label {
+  display: inline-block; font-size: 10px; font-weight: 700; color: #0f766e;
+  margin-right: 5px; vertical-align: 1px;
+}
+.dc-step-an { margin-top: 6px; font-size: 11.5px; color: var(--ink-2); line-height: 1.75; }
+.dc-step-sg {
+  margin-top: 5px; font-size: 11.5px; color: #0f766e; line-height: 1.7;
+  background: #ecfdf5; border-radius: 6px; padding: 4px 7px;
+}
+.dc-step-sg .dc-mini-label { color: #047857; }
+.dc-step.formal .dc-step-sg { background: #fffbeb; color: #b45309; }
+.dc-step.formal .dc-step-sg .dc-mini-label { color: #b45309; }
+.dc-step.none .dc-step-an { color: var(--ink-3); }
+
+/* 当前层次 */
+.dc-highest { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.dc-label {
+  flex: 0 0 auto; font-size: 12px; font-weight: 700; color: #fff; background: #0d9488;
+  padding: 3px 10px; border-radius: 6px; margin-top: 2px;
+}
+.dc-h-body { flex: 1; }
+.dc-h-txt { font-size: 14.5px; font-weight: 700; color: var(--ink); line-height: 1.6; }
+.dc-h-comment { font-size: 13px; color: var(--ink-3); line-height: 1.8; margin-top: 2px; }
+
+/* 下一步追问 */
+.dc-next {
+  border: 1px solid #99f6e4; border-radius: 12px; background: #f0fdfa;
+  padding: 12px 14px; margin-bottom: 16px;
+}
+.dc-next-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dc-next-head h4 { font-size: 13px; color: #115e59; }
+.dc-next-tag {
+  font-size: 11px; color: #0f766e; background: #ccfbf1;
+  border-radius: 999px; padding: 1px 9px;
+}
+.dc-question { font-size: 14.5px; font-weight: 700; color: #115e59; line-height: 1.7; margin-bottom: 6px; }
+.dc-line { font-size: 13px; color: var(--ink-2); line-height: 1.8; }
+.dc-sample { font-size: 13px; color: #0f766e; line-height: 1.8; margin-top: 4px; }
+
+/* 思辨广度（独立全宽卡） */
+.dc-breadth {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: #fafcfc; padding: 12px 14px; margin-bottom: 14px;
+}
+.dc-breadth h4 { font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.dc-cov-label { font-size: 11.5px; color: var(--ink-3); margin: 6px 0 5px; }
+.dc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-chip {
+  font-size: 11.5px; color: #0f766e; background: #ccfbf1; border: 1px solid #99f6e4;
+  border-radius: 999px; padding: 2px 10px;
+}
+.dc-chip-empty { font-size: 12px; color: var(--ink-3); }
+.dc-missing {
+  font-size: 12.5px; color: #b45309; background: #fffbeb;
+  border-radius: 6px; padding: 5px 9px; line-height: 1.6;
+}
+.dc-b-comment { font-size: 12.5px; color: var(--ink-3); line-height: 1.7; margin-top: 8px; }
+
+.dc-overall {
+  margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line);
+  font-size: 13.5px; color: var(--ink-2); line-height: 1.85;
+}
+
 /* ============ 报告：逐句改写示范 ============ */
 .rewrite-card { border-top: 3px solid #2563eb; }
 .rewrite-list { display: flex; flex-direction: column; gap: 14px; }
@@ -752,12 +896,13 @@ textarea {
   }
   /* 仅小单元（标题、单条建议/改写、链条节点、维度条）不被拦腰截断 */
   .block-title, .sug-item, .praise-item, .rw-item, .lf-item, .fal-item, .wl-item,
-  .dim-item, .logic-thesis, .logic-chain, .ar-angle {
+  .dim-item, .logic-thesis, .logic-chain, .ar-angle, .dc-step, .dc-next, .dc-breadth,
+  .dc-highest, .dg-step, .dg-break {
     break-inside: avoid; page-break-inside: avoid;
   }
 
   /* 所有滚动区展开，内容完整可见 */
-  .essay-view, .modal-body, .rewrite-list {
+  .essay-view, .modal-body, .rewrite-list, .dc-ladder {
     max-height: none !important; overflow: visible !important;
   }
 
@@ -771,6 +916,14 @@ textarea {
     min-width: 0 !important; max-width: none !important; width: 100% !important;
   }
   .logic-flow .lf-item:not(:last-child)::after { display: none !important; }
+
+  /* 思辨五层链：屏幕上横向滚动，打印时纵向堆叠 */
+  .dc-ladder {
+    flex-direction: column !important; gap: 6px !important;
+    padding: 0 0 10px !important;
+  }
+  .dc-step { min-width: 0 !important; max-width: none !important; width: 100% !important; }
+  .dc-step:not(:last-child)::after { display: none !important; }
 
   /* 作文原文去掉屏幕上的横格纸底纹，白底打印更干净 */
   .essay-view {

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split21" />
+<link rel="stylesheet" href="styles.css?v=split23" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -244,6 +244,42 @@
       </div>
     </div>
 
+    <!-- 思辨水平评析 -->
+    <div class="card dialectic-card">
+      <h3 class="block-title"><span class="title-bar"></span>思辨水平评析<span class="dim-note">（思维走到哪一层 · 逐层细评 · 下一步怎么追问）</span></h3>
+
+      <div class="dc-ladder" id="dc-ladder"></div>
+
+      <div class="dc-highest">
+        <span class="dc-label">当前层次</span>
+        <div class="dc-h-body">
+          <p class="dc-h-txt" id="dc-highest"></p>
+          <p class="dc-h-comment" id="dc-hc"></p>
+        </div>
+      </div>
+
+      <div class="dc-next">
+        <div class="dc-next-head">
+          <h4>下一步追问</h4><span class="dc-next-tag">只走一步 · 可直接嵌入原文</span>
+        </div>
+        <p class="dc-question" id="dc-question"></p>
+        <p class="dc-line" id="dc-tool"></p>
+        <p class="dc-line" id="dc-anchor"></p>
+        <p class="dc-sample" id="dc-sample"></p>
+      </div>
+
+      <div class="dc-breadth">
+        <h4>思辨广度</h4>
+        <div class="dc-cov-label">已展开的角度</div>
+        <div class="dc-tags" id="dc-covered"></div>
+        <div class="dc-cov-label">最该补的角度</div>
+        <p class="dc-missing" id="dc-missing"></p>
+        <p class="dc-b-comment" id="dc-bcomment"></p>
+      </div>
+
+      <p class="dc-overall" id="dc-overall"></p>
+    </div>
+
     <div class="report-grid">
       <div class="card">
         <h3 class="block-title"><span class="title-bar"></span>作文批注</h3>
@@ -322,9 +358,9 @@
   </div>
 </div>
 
-<script src="js/file-upload.js?v=split21"></script>
-<script src="js/engine.js?v=split21"></script>
-<script src="js/ai-client.js?v=split21"></script>
-<script src="js/app.js?v=split21"></script>
+<script src="js/file-upload.js?v=split23"></script>
+<script src="js/engine.js?v=split23"></script>
+<script src="js/ai-client.js?v=split23"></script>
+<script src="js/app.js?v=split23"></script>
 </body>
 </html>
