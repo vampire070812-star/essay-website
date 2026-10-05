@@ -356,7 +356,7 @@
       weakLinks: (function () {
         var raw2 = (Array.isArray(lr.weakLinks) ? lr.weakLinks : []).map(function (w) {
           return {
-            type: String(w.type || '可加强处').slice(0, 14),
+            type: String(w.type || '可调整处').slice(0, 14),
             excerpt: locateExcerpt(w.excerpt, rawText),
             point: String(w.point || '').trim().slice(0, 220),
             upgrade: String(w.upgrade || '').trim().slice(0, 280)

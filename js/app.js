@@ -633,16 +633,20 @@
       : '<li class="logic-empty">逻辑亮点暂不明显，先从“让步—转折”补起。</li>';
 
     var wls = Array.isArray(lr.weakLinks) ? lr.weakLinks : [];
+    // 删除方向 type（行文减法）——用暖色与补充类（蓝色）区分
+    var WL_DEL = { '论述累赘': 1, '同义重复': 1, '无意义铺陈': 1, '口号空转': 1, '例子功能重复': 1 };
     $('logic-weaklinks').innerHTML = wls.length
       ? wls.map(function (w) {
-        return '<li class="wl-item">' +
-          '<span class="wl-type">' + str(w.type, 12) + '</span>' +
+        var wtype = str(w.type, 12);
+        var isDel = !!WL_DEL[wtype];
+        return '<li class="wl-item' + (isDel ? ' wl-del' : '') + '">' +
+          '<span class="wl-type">' + (isDel ? '删减·' : '补充·') + wtype + '</span>' +
           (w.excerpt ? '<span class="wl-excerpt">“' + str(w.excerpt, 60) + '”</span>' : '') +
           (w.point ? '<span class="wl-point">' + str(w.point, 160) + '</span>' : '') +
-          (w.upgrade ? '<span class="wl-upgrade">↳ ' + str(w.upgrade, 200) + '</span>' : '') +
+          (w.upgrade ? '<span class="wl-upgrade">' + (isDel ? '✂ ' : '↳ ') + str(w.upgrade, 200) + '</span>' : '') +
           '</li>';
       }).join('')
-      : '<li class="logic-empty">本篇各主要论证环节都比较扎实，暂无明显的可加强处。</li>';
+      : '<li class="logic-empty">本篇各主要论证环节都比较扎实，暂无明显需要调整之处。</li>';
   }
 
   /* ---------- 逐句改写示范渲染 ---------- */

@@ -631,7 +631,7 @@ textarea {
 }
 .logic-tag.tag-weak { color: #1d4ed8; background: #dbeafe; }
 
-/* 论证可加强处：中性蓝，明确不是错误 */
+/* 论证可调整处：补充类中性蓝，删除类暖琥珀，均明确不是错误 */
 .logic-weak { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
 .logic-weak h4 { font-size: 13px; margin-bottom: 10px; color: var(--ink-2); }
 .logic-weak ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -646,6 +646,11 @@ textarea {
 .wl-excerpt { color: var(--ink); background: #eff6ff; border-radius: 4px; padding: 0 4px; }
 .wl-point { display: block; color: var(--ink-2); margin-top: 3px; }
 .wl-upgrade { display: block; color: #1d4ed8; font-size: 12.5px; margin-top: 2px; }
+/* 删除方向：累赘/重复/空转 → 琥珀色，提示“做减法” */
+.wl-item.wl-del { border-color: #fcd34d; border-left-color: #d97706; background: #fffdf5; }
+.wl-item.wl-del .wl-type { background: #d97706; }
+.wl-item.wl-del .wl-excerpt { background: #fef3c7; }
+.wl-item.wl-del .wl-upgrade { color: #b45309; }
 
 /* ============ 报告：逐句改写示范 ============ */
 .rewrite-card { border-top: 3px solid #2563eb; }
