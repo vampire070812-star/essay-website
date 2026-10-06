@@ -705,9 +705,26 @@
 
     var nm = dr.nextMove || {};
     $('dc-question').textContent = nm.question || '（未生成下一步追问）';
-    $('dc-tool').innerHTML = nm.tool ? '<b>思辨动作：</b>' + escapeHtml(nm.tool) : '';
-    $('dc-anchor').innerHTML = nm.anchor ? '<b>落点：</b>' + escapeHtml(nm.anchor) : '';
-    $('dc-sample').innerHTML = nm.sample ? '<b>示例句：</b>' + escapeHtml(nm.sample) : '';
+    $('dc-tool-chip').textContent = nm.tool ? '思辨动作 · ' + nm.tool : '';
+
+    $('dc-why').textContent = nm.why || '';
+    $('nm-why-row').style.display = nm.why ? '' : 'none';
+
+    var thinkSteps = Array.isArray(nm.think) ? nm.think : [];
+    $('dc-think').innerHTML = thinkSteps.map(function (q, i) {
+      return '<li><span class="nm-think-num">' + (i + 1) + '</span>' +
+        '<span class="nm-think-q">' + str(q, 140) + '</span></li>';
+    }).join('');
+    $('nm-think-wrap').style.display = thinkSteps.length ? '' : 'none';
+
+    $('dc-pitfall').textContent = nm.pitfall || '';
+    $('nm-pit-wrap').style.display = nm.pitfall ? '' : 'none';
+
+    $('dc-anchor').innerHTML = nm.anchor
+      ? '<span class="nm-anchor-ic">◈</span><b>落点　</b>' + escapeHtml(nm.anchor) : '';
+
+    $('dc-sample').textContent = nm.sample || '';
+    $('nm-sample-wrap').style.display = nm.sample ? '' : 'none';
 
     var bd = dr.breadth || {};
     var cov = Array.isArray(bd.covered) ? bd.covered : [];

@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split23" />
+<link rel="stylesheet" href="styles.css?v=split24" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -260,12 +260,35 @@
 
       <div class="dc-next">
         <div class="dc-next-head">
-          <h4>下一步追问</h4><span class="dc-next-tag">只走一步 · 可直接嵌入原文</span>
+          <h4>下一步追问</h4><span class="dc-next-tag" id="dc-tool-chip"></span>
         </div>
-        <p class="dc-question" id="dc-question"></p>
-        <p class="dc-line" id="dc-tool"></p>
-        <p class="dc-line" id="dc-anchor"></p>
-        <p class="dc-sample" id="dc-sample"></p>
+
+        <div class="nm-q">
+          <span class="nm-q-ic">?</span>
+          <p class="nm-q-txt" id="dc-question"></p>
+        </div>
+
+        <div class="nm-row" id="nm-why-row">
+          <span class="dc-mini-label">为什么追这一问</span>
+          <p class="nm-why" id="dc-why"></p>
+        </div>
+
+        <div class="nm-think" id="nm-think-wrap">
+          <div class="nm-think-h"><span class="nm-think-ic">↳</span>顺着这几步往下想</div>
+          <ol class="nm-think-list" id="dc-think"></ol>
+        </div>
+
+        <div class="nm-pit" id="nm-pit-wrap">
+          <span class="nm-pit-ic">!</span>
+          <p class="nm-pit-txt" id="dc-pitfall"></p>
+        </div>
+
+        <p class="nm-anchor" id="dc-anchor"></p>
+
+        <div class="nm-sample" id="nm-sample-wrap">
+          <span class="dc-mini-label">示例句 · 可直接嵌入原文</span>
+          <p class="nm-sample-txt" id="dc-sample"></p>
+        </div>
       </div>
 
       <div class="dc-breadth">
@@ -358,9 +381,9 @@
   </div>
 </div>
 
-<script src="js/file-upload.js?v=split23"></script>
-<script src="js/engine.js?v=split23"></script>
-<script src="js/ai-client.js?v=split23"></script>
-<script src="js/app.js?v=split23"></script>
+<script src="js/file-upload.js?v=split24"></script>
+<script src="js/engine.js?v=split24"></script>
+<script src="js/ai-client.js?v=split24"></script>
+<script src="js/app.js?v=split24"></script>
 </body>
 </html>

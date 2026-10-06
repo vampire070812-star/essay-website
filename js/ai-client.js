@@ -401,8 +401,15 @@
         return {
           question: String(nm.question || '').slice(0, 200),
           tool: String(nm.tool || '').slice(0, 12),
+          why: String(nm.why || '').slice(0, 260),
+          think: (Array.isArray(nm.think) ? nm.think : [])
+            .map(function (q) { return String(q || '').trim(); })
+            .filter(Boolean)
+            .map(function (q) { return q.slice(0, 150); })
+            .slice(0, 3),
+          pitfall: String(nm.pitfall || '').slice(0, 260),
           anchor: String(nm.anchor || '').slice(0, 200),
-          sample: String(nm.sample || '').slice(0, 300)
+          sample: String(nm.sample || '').slice(0, 320)
         };
       })(),
       breadth: (function () {

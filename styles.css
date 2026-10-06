@@ -757,20 +757,81 @@ textarea {
 .dc-h-txt { font-size: 14.5px; font-weight: 700; color: var(--ink); line-height: 1.6; }
 .dc-h-comment { font-size: 13px; color: var(--ink-3); line-height: 1.8; margin-top: 2px; }
 
-/* 下一步追问 */
+/* 下一步追问（引导路径：为何问 → 怎么想 → 别假答 → 写出来） */
 .dc-next {
-  border: 1px solid #99f6e4; border-radius: 12px; background: #f0fdfa;
-  padding: 12px 14px; margin-bottom: 16px;
+  border: 1px solid #99f6e4; border-radius: 14px;
+  background: linear-gradient(180deg, #f0fdfa 0%, #f8fffe 100%);
+  padding: 14px 16px; margin-bottom: 16px;
 }
-.dc-next-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.dc-next-head h4 { font-size: 13px; color: #115e59; }
+.dc-next-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dc-next-head h4 { font-size: 13.5px; color: #115e59; }
 .dc-next-tag {
-  font-size: 11px; color: #0f766e; background: #ccfbf1;
-  border-radius: 999px; padding: 1px 9px;
+  font-size: 11px; font-weight: 600; color: #fff; background: #0d9488;
+  border-radius: 999px; padding: 2px 11px;
 }
-.dc-question { font-size: 14.5px; font-weight: 700; color: #115e59; line-height: 1.7; margin-bottom: 6px; }
-.dc-line { font-size: 13px; color: var(--ink-2); line-height: 1.8; }
-.dc-sample { font-size: 13px; color: #0f766e; line-height: 1.8; margin-top: 4px; }
+.dc-next-tag:empty { display: none; }
+
+/* 核心追问 */
+.nm-q {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: #fff; border: 1px solid #b2f5ea; border-radius: 10px;
+  padding: 10px 13px; margin-bottom: 10px;
+}
+.nm-q-ic {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+  background: #14b8a6; color: #fff; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; margin-top: 1px;
+}
+.nm-q-txt { font-size: 14.5px; font-weight: 700; color: #115e59; line-height: 1.7; }
+
+/* 为什么追这一问 */
+.nm-row { margin-bottom: 10px; }
+.nm-row .dc-mini-label { display: block; margin: 0 0 3px; }
+.nm-why { font-size: 12.5px; color: var(--ink-2); line-height: 1.8; }
+
+/* 思考台阶 */
+.nm-think {
+  background: rgba(204, 251, 241, .55); border-radius: 10px;
+  padding: 9px 13px 10px; margin-bottom: 10px;
+}
+.nm-think-h { font-size: 12px; font-weight: 700; color: #0f766e; margin-bottom: 7px; }
+.nm-think-ic { margin-right: 4px; }
+.nm-think-list { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.nm-think-list li { display: flex; align-items: flex-start; gap: 9px; }
+.nm-think-num {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; border: 1px solid #5eead4; color: #0d9488;
+  font-size: 11px; font-weight: 700; text-align: center; line-height: 17px;
+  margin-top: 2px;
+}
+.nm-think-q { font-size: 12.5px; color: #134e4a; line-height: 1.7; }
+
+/* 伪回答提醒 */
+.nm-pit {
+  display: flex; align-items: flex-start; gap: 9px;
+  background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+  padding: 9px 12px; margin-bottom: 10px;
+}
+.nm-pit-ic {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  background: #f59e0b; color: #fff; font-size: 12px; font-weight: 700;
+  text-align: center; line-height: 20px; margin-top: 1px;
+}
+.nm-pit-txt { font-size: 12.5px; color: #92400e; line-height: 1.75; }
+
+/* 落点 */
+.nm-anchor { font-size: 12.5px; color: var(--ink-2); line-height: 1.7; margin-bottom: 10px; }
+.nm-anchor:empty { display: none; }
+.nm-anchor b { color: var(--ink); font-weight: 700; }
+.nm-anchor-ic { color: #0d9488; margin-right: 2px; }
+
+/* 示例句 */
+.nm-sample {
+  background: #fff; border-left: 3px solid #14b8a6;
+  border-radius: 0 10px 10px 0; padding: 8px 13px 9px;
+}
+.nm-sample .dc-mini-label { display: block; margin: 0 0 3px; }
+.nm-sample-txt { font-size: 13px; color: #0f766e; line-height: 1.85; }
 
 /* 思辨广度（独立全宽卡） */
 .dc-breadth {
@@ -896,8 +957,8 @@ textarea {
   }
   /* 仅小单元（标题、单条建议/改写、链条节点、维度条）不被拦腰截断 */
   .block-title, .sug-item, .praise-item, .rw-item, .lf-item, .fal-item, .wl-item,
-  .dim-item, .logic-thesis, .logic-chain, .ar-angle, .dc-step, .dc-next, .dc-breadth,
-  .dc-highest, .dg-step, .dg-break {
+  .dim-item, .logic-thesis, .logic-chain, .ar-angle, .dc-step, .dc-breadth,
+  .dc-highest, .dg-step, .dg-break, .nm-q, .nm-think, .nm-pit, .nm-sample {
     break-inside: avoid; page-break-inside: avoid;
   }
 
