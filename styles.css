@@ -1089,15 +1089,36 @@ textarea {
 }
 
 /* ============ 打印 / PDF ============ */
+#print-host { display: none; }
+.btn-print-analyze { margin-left: auto; padding: 4px 12px; font-size: 13px; }
 @page { margin: 12mm 10mm; }
 @media print {
   .site-header, .site-footer, .stepper, .report-actions,
   .upload-zone, .upload-progress, .cloud-save-note, .toast-wrap,
-  #auth-modal, #history-modal { display: none !important; }
+  #auth-modal, #history-modal, #print-choice-modal, #settings-modal,
+  .no-print { display: none !important; }
   body { background: #fff; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .container { margin: 0; max-width: 100%; padding: 0; }
   .panel { display: none !important; }
-  #panel-report { display: block !important; }
+  /* 组合打印：JS 把要打印的内容组合进 #print-host；若未组合（用户手动 Ctrl+P）则回退显示报告面板 */
+  #print-host { display: block !important; }
+  #print-host:empty { display: none !important; }
+  #print-host:empty ~ * #panel-report, body:has(#print-host:empty) #panel-report { display: block !important; }
+
+  .print-page-break { page-break-after: always; break-after: page; }
+  .print-doc-title { font-size: 21px; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid #333; }
+  .ar-print-material {
+    border: 1px solid #ccc; background: #fafafa; padding: 10px 14px; margin-bottom: 16px;
+    font-size: 13px; line-height: 1.9; color: #333; border-radius: 4px;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  /* 审题指导打印排版：各小节卡片化、避免拦腰截断 */
+  #print-host .ar-head { border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px; }
+  #print-host .ar-section { margin-bottom: 14px; }
+  #print-host .ar-concept, #print-host .ar-angle, #print-host .dg-step, #print-host .dg-tension,
+  #print-host .dg-break, #print-host .ar-question, #print-host .ar-warning {
+    break-inside: avoid; page-break-inside: avoid;
+  }
 
   /* 大卡片允许跨页自然续排——强制整卡不换页会在页底留下大片空白 */
   .card {

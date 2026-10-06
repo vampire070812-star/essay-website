@@ -403,6 +403,7 @@
         '<h3>审题指导</h3>' +
         '<span class="ar-tag' + (isLocal ? ' local' : '') + '">' + str(r.topicType, 12) + '</span>' +
         '<span class="ar-engine">' + (isLocal ? '本地规则 · 关键词粗提取' : 'AI · ' + str(model, 30)) + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-print-analyze no-print" id="btn-print-analyze" title="把审题指导单独生成一份排版整齐的 PDF">📄 生成 PDF</button>' +
       '</div>' +
       (r.warning ? '<div class="ar-warning">' + str(r.warning, 300) + '</div>' : '') +
       (r.notice ? '<div class="ar-warning">ℹ ' + str(r.notice, 300) + '</div>' : '') +
@@ -782,29 +783,90 @@
 
   $('btn-again').addEventListener('click', function () { showStep(1, true); textEl.focus(); });
 
-  // 生成报告 PDF：设置打印标题（文件名），展开所有滚动区域后打印
-  $('btn-print').addEventListener('click', function () {
-    var title = $('report-title').textContent.trim();
+  /* ---------- 生成 PDF：统一组合到 #print-host 再打印 ---------- */
+  var printHost = $('print-host');
+
+  function analyzePrintHtml() {
+    var material = promptEl.value.trim();
+    return '<section class="print-part">' +
+      '<h2 class="print-doc-title">作文审题指导</h2>' +
+      (material ? '<div class="ar-print-material"><b>【题目材料】</b>' + str(material, 800) + '</div>' : '') +
+      analyzeBox.innerHTML +
+      '</section>';
+  }
+
+  function reportPrintHtml() {
+    return '<section class="print-part">' + $('panel-report').innerHTML + '</section>';
+  }
+
+  function doPrint(parts, docTitle) {
     var origTitle = document.title;
-    // report-title 形如“《xxx》批改报告”，去掉书名号和已有后缀，只拼一次
-    var base = title.replace(/[《》]/g, '').replace(/批改报告/g, '').trim();
-    document.title = (base && base !== '作文批改报告') ? base + '批改报告' : '作文批改报告';
-    // 临时展开滚动区域（纵向高度限制 + 段落功能链横向滚动）
-    var expandSel = '.essay-view, .modal-body, .logic-flow, .rewrite-list, .dc-ladder';
-    document.querySelectorAll(expandSel).forEach(function (el) {
-      el.style.maxHeight = 'none';
-      el.style.overflow = 'visible';
-      el.style.overflowX = 'visible';
-    });
+    printHost.innerHTML = parts.join('<div class="print-page-break"></div>');
+    document.title = docTitle;
+    // 打印 CSS 已强制展开滚动区，这里无需改原页面样式
     setTimeout(function () {
       window.print();
       document.title = origTitle;
-      document.querySelectorAll(expandSel).forEach(function (el) {
-        el.style.maxHeight = '';
-        el.style.overflow = '';
-        el.style.overflowX = '';
-      });
+      printHost.innerHTML = '';
     }, 100);
+  }
+
+  function printAnalyzeOnly() {
+    if (analyzeBox.hidden || !analyzeBox.innerHTML.trim()) return;
+    doPrint([analyzePrintHtml()], '作文审题指导');
+  }
+
+  // 审题指导结果区的「生成 PDF」按钮（结果每次重渲染，用事件委托）
+  analyzeBox.addEventListener('click', function (e) {
+    if (e.target && e.target.id === 'btn-print-analyze') printAnalyzeOnly();
+  });
+
+  // 批改报告 PDF：已填题目材料时，询问是否连同审题指导一起生成
+  var printChoiceModal = $('print-choice-modal');
+  function closePrintChoice() { printChoiceModal.hidden = true; }
+  $('print-choice-close').addEventListener('click', closePrintChoice);
+  printChoiceModal.addEventListener('click', function (e) { if (e.target === printChoiceModal) closePrintChoice(); });
+
+  $('print-report-only').addEventListener('click', function () {
+    closePrintChoice();
+    printReport(false);
+  });
+  $('print-with-analyze').addEventListener('click', function () {
+    var hasAnalyze = !analyzeBox.hidden && !!analyzeBox.innerHTML.trim();
+    closePrintChoice();
+    if (hasAnalyze) { printReport(true); return; }
+    // 尚未审题：先跑审题，成功后连同批改报告一起生成
+    var btn = this;
+    btn.disabled = true;
+    EssayAI.analyze(promptEl.value.trim(), EssayAI.getSettings()).then(function (data) {
+      renderAnalyze(data.report, data.engine, data.model);
+      printReport(true);
+    }).catch(function (err) {
+      analyzeHint.textContent = '审题请求失败：' + ((err && err.message) || '未知错误') + '，已改为只生成批改报告。';
+      analyzeHint.className = 'analyze-hint error';
+      printReport(false);
+    }).then(function () { btn.disabled = false; });
+  });
+
+  function printReport(withAnalyze) {
+    var title = $('report-title').textContent.trim();
+    var base = title.replace(/[《》]/g, '').replace(/批改报告/g, '').trim();
+    var docTitle = (base && base !== '作文批改报告') ? base + '批改报告' : '作文批改报告';
+    var parts = withAnalyze ? [analyzePrintHtml(), reportPrintHtml()] : [reportPrintHtml()];
+    doPrint(parts, docTitle);
+  }
+
+  $('btn-print').addEventListener('click', function () {
+    var hasMaterial = EssayEngine.cjkLen(promptEl.value.trim()) >= 10;
+    if (!hasMaterial) { printReport(false); return; }
+    var hasAnalyze = !analyzeBox.hidden && !!analyzeBox.innerHTML.trim();
+    $('print-choice-msg').textContent = hasAnalyze
+      ? '检测到你已生成过本题的审题指导。需要把审题指导排在批改报告之前，一起生成一份完整 PDF 吗？'
+      : '你已填写题目材料，但还没有生成本题的审题指导。要先审题，再把审题指导排在批改报告之前一起生成 PDF 吗？';
+    $('print-with-analyze').textContent = hasAnalyze
+      ? '✅ 审题指导 + 批改报告，一起生成'
+      : '🔍 先审题，再连同批改报告一起生成';
+    printChoiceModal.hidden = false;
   });
 
   /* ---------- AI 设置弹窗 ---------- */
