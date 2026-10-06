@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split24" />
+<link rel="stylesheet" href="styles.css?v=split25" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -20,6 +20,8 @@
     </div>
     <div class="header-right">
       <span class="mode-badge mode-ai" id="mode-badge">🤖 AI 模式</span>
+      <button type="button" class="btn-history" id="btn-history" hidden>📂 历史记录</button>
+      <div class="user-area" id="user-area"></div>
       <button type="button" class="btn-settings" id="btn-settings">⚙ AI 设置</button>
     </div>
   </div>
@@ -335,6 +337,7 @@
       <button type="button" class="btn btn-ghost" id="btn-print">📄 生成报告 PDF</button>
       <button type="button" class="btn btn-primary" id="btn-again">修改后重新批改</button>
     </div>
+    <p class="cloud-save-note" id="cloud-save-note" hidden></p>
   </section>
 
 </main>
@@ -381,9 +384,63 @@
   </div>
 </div>
 
-<script src="js/file-upload.js?v=split24"></script>
-<script src="js/engine.js?v=split24"></script>
-<script src="js/ai-client.js?v=split24"></script>
-<script src="js/app.js?v=split24"></script>
+<!-- 登录 / 注册弹窗 -->
+<div class="modal-mask" id="auth-modal" hidden>
+  <div class="modal modal-auth">
+    <div class="modal-head">
+      <h3 id="auth-title">登录账号</h3>
+      <button type="button" class="modal-close" id="auth-close" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="auth-tabs" role="tablist">
+        <button type="button" class="auth-tab active" id="auth-tab-login" data-tab="login">登录</button>
+        <button type="button" class="auth-tab" id="auth-tab-register" data-tab="register">注册</button>
+      </div>
+      <div class="field">
+        <label for="auth-login">账号</label>
+        <input type="text" id="auth-login" maxlength="20" autocomplete="username"
+          placeholder="3-20 位，中英文 / 数字 / 下划线 / 连字符" />
+        <p class="field-hint" id="auth-login-hint">可直接用习惯的用户名；也可以把手机号作为账号注册（当前版本为账号密码登录，暂不发短信验证码）。</p>
+      </div>
+      <div class="field">
+        <label for="auth-pw">密码</label>
+        <input type="password" id="auth-pw" maxlength="72" autocomplete="current-password" placeholder="6-72 位" />
+      </div>
+      <div class="field" id="auth-pw2-field" hidden>
+        <label for="auth-pw2">确认密码</label>
+        <input type="password" id="auth-pw2" maxlength="72" autocomplete="new-password" placeholder="再输入一次密码" />
+      </div>
+      <p class="modal-tip" id="auth-msg"></p>
+    </div>
+    <div class="modal-foot auth-foot">
+      <span class="auth-secure-note">🔒 密码加盐哈希加密存储</span>
+      <button type="button" class="btn btn-primary" id="auth-submit">登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 历史记录弹窗 -->
+<div class="modal-mask" id="history-modal" hidden>
+  <div class="modal modal-history">
+    <div class="modal-head">
+      <h3>📂 我的批改历史</h3>
+      <button type="button" class="modal-close" id="history-close" title="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="history-list" id="history-list">
+        <p class="history-loading">正在加载历史报告……</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 轻提示 -->
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+
+<script src="js/file-upload.js?v=split25"></script>
+<script src="js/engine.js?v=split25"></script>
+<script src="js/ai-client.js?v=split25"></script>
+<script src="js/auth.js?v=split25"></script>
+<script src="js/app.js?v=split25"></script>
 </body>
 </html>

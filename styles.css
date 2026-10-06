@@ -939,11 +939,148 @@ textarea {
   .uz-btn { width: 100%; text-align: center; }
 }
 
+/* ============ 账号 / 登录 / 历史记录 ============ */
+.btn-login {
+  border: none; cursor: pointer; font-family: inherit; white-space: nowrap;
+  font-size: 13px; font-weight: 700; color: #fff;
+  padding: 8px 16px; border-radius: 999px;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, .28);
+  transition: all .2s;
+}
+.btn-login:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(79, 70, 229, .42); }
+
+.btn-history {
+  border: 1.5px solid var(--line); background: #fff; cursor: pointer; white-space: nowrap;
+  font-size: 13px; color: var(--ink-2); font-weight: 600;
+  padding: 7px 14px; border-radius: 999px; font-family: inherit;
+  transition: all .2s;
+}
+.btn-history:hover { border-color: var(--primary); color: var(--primary); }
+.btn-history[hidden] { display: none; }
+
+.user-area { position: relative; }
+.user-chip {
+  display: flex; align-items: center; gap: 6px; max-width: 170px;
+  border: 1.5px solid #c7d2fe; background: var(--primary-light);
+  cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700; color: var(--primary-dark);
+  padding: 6px 12px; border-radius: 999px; transition: border-color .2s;
+}
+.user-chip:hover { border-color: var(--primary); }
+.uc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uc-caret { font-size: 10px; opacity: .65; }
+
+.user-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); width: 240px;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 16px 44px rgba(17, 24, 39, .16);
+  padding: 8px; z-index: 60; animation: fadeUp .18s ease both;
+}
+.user-menu[hidden] { display: none; }
+.um-head { padding: 8px 10px 10px; border-bottom: 1px dashed var(--line); margin-bottom: 6px; }
+.um-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.um-login { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+.um-quota {
+  font-size: 12px; color: var(--ink-2); line-height: 1.6;
+  background: #f8fafc; border-radius: 8px; padding: 7px 10px; margin: 6px 0;
+}
+.um-item {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  cursor: pointer; font-family: inherit; font-size: 13.5px; color: var(--ink-2);
+  padding: 9px 10px; border-radius: 8px;
+}
+.um-item:hover { background: var(--primary-light); color: var(--primary-dark); }
+.um-item.danger:hover { background: var(--red-bg); color: var(--red); }
+
+/* 登录 / 注册弹窗 */
+.modal-auth { max-width: 440px; }
+.auth-tabs {
+  display: flex; gap: 6px; background: #f1f5f9; padding: 4px;
+  border-radius: 10px; margin-bottom: 18px;
+}
+.auth-tab {
+  flex: 1; border: none; background: none; cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 700; color: var(--ink-3);
+  padding: 9px 0; border-radius: 8px; transition: all .2s;
+}
+.auth-tab.active { background: #fff; color: var(--primary-dark); box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+.auth-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.auth-secure-note { font-size: 12px; color: var(--ink-3); }
+.auth-foot .btn-primary { min-width: 96px; }
+
+/* 历史记录弹窗 */
+.modal-history { max-width: 680px; }
+.history-list { display: flex; flex-direction: column; gap: 10px; }
+.history-loading, .history-empty {
+  text-align: center; color: var(--ink-3); font-size: 13.5px; padding: 34px 0; line-height: 1.9;
+}
+.h-item {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  cursor: pointer; transition: all .15s; background: #fff; text-align: left;
+  font-family: inherit;
+}
+.h-item:hover { border-color: #a5b4fc; box-shadow: 0 4px 14px rgba(79, 70, 229, .1); }
+.h-score {
+  flex: 0 0 52px; width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 800; font-size: 16px;
+  border: 2.5px solid; background: #fff; color: var(--ink-2);
+}
+.h-main { flex: 1; min-width: 0; }
+.h-title-line { font-size: 14.5px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-band { font-size: 12px; font-weight: 700; margin-left: 8px; }
+.h-summary {
+  font-size: 12.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+.h-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.h-date { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.h-del {
+  border: none; background: none; cursor: pointer; color: var(--ink-3);
+  font-size: 12px; padding: 2px 7px; border-radius: 6px; font-family: inherit;
+}
+.h-del:hover { color: var(--red); background: var(--red-bg); }
+
+.cloud-save-note { text-align: center; font-size: 12.5px; color: var(--ink-3); margin-top: 12px; }
+.cloud-save-note.ok { color: var(--green); }
+.cloud-save-note.err { color: var(--amber); }
+.cloud-save-note .link-btn { vertical-align: baseline; }
+
+/* 轻提示 Toast */
+.toast-wrap {
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+  z-index: 200; display: flex; flex-direction: column; gap: 8px;
+  align-items: center; pointer-events: none;
+}
+.toast {
+  background: rgba(17, 24, 39, .92); color: #fff; font-size: 13.5px;
+  padding: 10px 20px; border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .25);
+  animation: toastIn .25s ease both; max-width: 88vw;
+}
+.toast.ok { background: #065f46; }
+.toast.err { background: #991b1b; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 600px) {
+  .btn-history { padding: 7px 10px; }
+  .user-chip { padding: 6px 10px; max-width: 112px; }
+  .brand p { display: none; }
+  .auth-secure-note { display: none; }
+  .h-score { flex-basis: 44px; width: 44px; height: 44px; font-size: 14px; }
+  .h-item { gap: 10px; padding: 10px; }
+}
+
 /* ============ 打印 / PDF ============ */
 @page { margin: 12mm 10mm; }
 @media print {
   .site-header, .site-footer, .stepper, .report-actions,
-  .upload-zone, .upload-progress { display: none !important; }
+  .upload-zone, .upload-progress, .cloud-save-note, .toast-wrap,
+  #auth-modal, #history-modal { display: none !important; }
   body { background: #fff; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .container { margin: 0; max-width: 100%; padding: 0; }
   .panel { display: none !important; }

@@ -20,9 +20,14 @@
 启动：  python server.py      然后浏览器打开 http://127.0.0.1:8000/
 """
 
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
+import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -88,6 +93,269 @@ SERVER_MODEL = (
     os.environ.get("LLM_MODEL", "").strip()
     or PROVIDERS["deepseek"]["model"]
 )
+
+
+# ============================================================
+#  账号体系：SQLite + PBKDF2 密码哈希 + 随机 Token 会话（全部仅用标准库）
+#
+#  - 注册/登录/退出，HttpOnly Cookie 会话（30 天）
+#  - 历史批改报告、作文草稿随账号云端保存
+#  - 用【服务端 Key】（.env/环境变量）调用大模型时：要求登录 + 每账号每日限额；
+#    浏览器自带 Key 的请求不限制（用户花的是自己的额度）
+#  - 手机号验证码 / 微信扫码登录需要资质与备案，当前版本先落地账号密码，
+#    users 表已预留 phone 字段，将来可平滑接入
+# ============================================================
+
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "essaygrader.db")
+
+SESSION_COOKIE = "eg_session"
+SESSION_TTL = 30 * 24 * 3600
+PBKDF2_ITERS = 200_000
+
+# 设 ALLOW_ANON_AI=1 可关闭“用服务端 Key 必须登录”的限制（退回完全开放）
+ALLOW_ANON_SERVER_AI = os.environ.get("ALLOW_ANON_AI", "0").strip() in ("1", "true", "yes")
+# 每日限额：0 表示不限；浏览器自带 Key 不受此限
+GRADE_DAILY_LIMIT = int(os.environ.get("GRADES_PER_DAY", "30") or "0")
+ANALYZE_DAILY_LIMIT = int(os.environ.get("ANALYZES_PER_DAY", "60") or "0")
+# 同一 IP 登录/注册尝试频率限制（10 分钟内最多 20 次）
+AUTH_WINDOW_SEC = 600
+AUTH_MAX_ATTEMPTS = 20
+
+DB_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  login        TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  phone        TEXT,
+  pw_hash      TEXT NOT NULL,
+  created_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token      TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  last_seen  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS essays (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL,
+  title      TEXT NOT NULL DEFAULT '',
+  prompt     TEXT NOT NULL DEFAULT '',
+  essay_text TEXT NOT NULL DEFAULT '',
+  score      INTEGER,
+  band_label TEXT NOT NULL DEFAULT '',
+  band_sub   TEXT NOT NULL DEFAULT '',
+  summary    TEXT NOT NULL DEFAULT '',
+  report_json TEXT NOT NULL,
+  model      TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_essays_user ON essays(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS drafts (
+  user_id    INTEGER PRIMARY KEY,
+  data_json  TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usage_days (
+  user_id  INTEGER NOT NULL,
+  day      TEXT NOT NULL,
+  grades   INTEGER NOT NULL DEFAULT 0,
+  analyzes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+"""
+
+db = None
+db_lock = threading.RLock()
+_auth_attempts = {}
+
+LOGIN_RE = re.compile(r"^[0-9A-Za-z_\-\u4e00-\u9fa5]{3,20}$")
+NAME_RE = re.compile(r"^[0-9A-Za-z_\-\u4e00-\u9fa5]{1,20}$")
+
+
+def init_db():
+    global db
+    os.makedirs(DATA_DIR, exist_ok=True)
+    db = sqlite3.connect(DB_PATH, check_same_thread=False)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.executescript(DB_SCHEMA)
+    db.commit()
+
+
+def today_cn():
+    """按北京时间（UTC+8）划分配额日，不依赖服务器所在时区。"""
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 8 * 3600))
+
+
+# ---------------- 密码 ----------------
+
+def hash_password(pw):
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), salt, PBKDF2_ITERS)
+    return "pbkdf2_sha256$%d$%s$%s" % (PBKDF2_ITERS, salt.hex(), dk.hex())
+
+
+def verify_password(pw, stored):
+    try:
+        algo, iters_s, salt_hex, hash_hex = stored.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"),
+                                 bytes.fromhex(salt_hex), int(iters_s))
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except (ValueError, TypeError):
+        return False
+
+
+# ---------------- 用户 / 会话 ----------------
+
+def db_create_user(login, pw, display_name):
+    """创建用户；login 重复返回 None。"""
+    now = int(time.time())
+    try:
+        with db_lock:
+            cur = db.execute(
+                "INSERT INTO users(login, display_name, pw_hash, created_at) VALUES(?,?,?,?)",
+                (login, display_name, hash_password(pw), now))
+            db.commit()
+            return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None
+
+
+def db_get_user_by_login(login):
+    with db_lock:
+        return db.execute("SELECT * FROM users WHERE login=?", (login,)).fetchone()
+
+
+def db_get_user(uid):
+    with db_lock:
+        return db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+
+
+def db_create_session(uid):
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    with db_lock:
+        db.execute(
+            "INSERT INTO sessions(token, user_id, created_at, expires_at, last_seen) VALUES(?,?,?,?,?)",
+            (token, uid, now, now + SESSION_TTL, now))
+        db.commit()
+    return token
+
+
+def db_get_session_user(token):
+    now = int(time.time())
+    with db_lock:
+        row = db.execute(
+            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token=? AND s.expires_at>?", (token, now)).fetchone()
+        if row:
+            db.execute("UPDATE sessions SET last_seen=? WHERE token=? AND last_seen<?",
+                       (now, token, now - 600))
+            db.commit()
+        return row
+
+
+def db_delete_session(token):
+    with db_lock:
+        db.execute("DELETE FROM sessions WHERE token=?", (token,))
+        db.commit()
+
+
+def auth_attempt_gate(ip):
+    """同一 IP 登录/注册尝试限流。返回 False 表示尝试过于频繁。"""
+    now = time.time()
+    lst = [t for t in _auth_attempts.get(ip, []) if now - t < AUTH_WINDOW_SEC]
+    ok = len(lst) < AUTH_MAX_ATTEMPTS
+    lst.append(now)
+    _auth_attempts[ip] = lst
+    if len(_auth_attempts) > 5000:  # 内存兜底清理
+        for k in [k for k, v in _auth_attempts.items()
+                  if not v or now - v[-1] > AUTH_WINDOW_SEC]:
+            _auth_attempts.pop(k, None)
+    return ok
+
+
+# ---------------- 历史报告 / 草稿 / 配额 ----------------
+
+def db_create_essay(uid, title, prompt, text, score, band_label, band_sub,
+                    summary, report_json, model, created_at):
+    with db_lock:
+        cur = db.execute(
+            "INSERT INTO essays(user_id, title, prompt, essay_text, score, band_label, "
+            "band_sub, summary, report_json, model, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (uid, title, prompt, text, score, band_label, band_sub,
+             summary, report_json, model, created_at))
+        db.commit()
+        return cur.lastrowid
+
+
+def db_list_essays(uid, limit=100):
+    with db_lock:
+        rows = db.execute(
+            "SELECT id, title, prompt, essay_text, score, band_label, band_sub, summary, "
+            "model, created_at FROM essays WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def db_get_essay(uid, essay_id):
+    with db_lock:
+        row = db.execute("SELECT * FROM essays WHERE id=? AND user_id=?",
+                         (essay_id, uid)).fetchone()
+        return dict(row) if row else None
+
+
+def db_delete_essay(uid, essay_id):
+    with db_lock:
+        cur = db.execute("DELETE FROM essays WHERE id=? AND user_id=?", (essay_id, uid))
+        db.commit()
+        return cur.rowcount > 0
+
+
+def db_save_draft(uid, data_json, now):
+    with db_lock:
+        db.execute(
+            "INSERT INTO drafts(user_id, data_json, updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json, "
+            "updated_at=excluded.updated_at", (uid, data_json, now))
+        db.commit()
+
+
+def db_get_draft(uid):
+    with db_lock:
+        row = db.execute("SELECT data_json, updated_at FROM drafts WHERE user_id=?",
+                         (uid,)).fetchone()
+        return dict(row) if row else None
+
+
+def db_clear_draft(uid):
+    with db_lock:
+        db.execute("DELETE FROM drafts WHERE user_id=?", (uid,))
+        db.commit()
+
+
+def db_usage_get(uid, day):
+    with db_lock:
+        row = db.execute("SELECT grades, analyzes FROM usage_days WHERE user_id=? AND day=?",
+                         (uid, day)).fetchone()
+        return (row["grades"], row["analyzes"]) if row else (0, 0)
+
+
+def db_usage_bump(uid, day, column):
+    """column 仅允许内部硬编码值，不存在 SQL 注入面。"""
+    if column not in ("grades", "analyzes"):
+        return
+    with db_lock:
+        db.execute(
+            "INSERT INTO usage_days(user_id, day, grades, analyzes) VALUES(?,?,0,0) "
+            "ON CONFLICT(user_id, day) DO UPDATE SET " + column + "=" + column + "+1",
+            (uid, day))
+        db.commit()
 
 
 # ============================================================
@@ -840,14 +1108,73 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # 静默；需要调试可改为 print(args)
 
-    def _send_json(self, obj, status=200):
+    def _send_json(self, obj, status=200, extra_headers=None):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        for k, v in (extra_headers or []):
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
+
+    def _api_error(self, code, message, status=400):
+        self._send_json({"ok": False, "code": code, "message": message}, status)
+
+    # ---------------- 账号会话辅助 ----------------
+
+    def _is_https(self):
+        return self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https"
+
+    def _cookie(self, name):
+        raw = self.headers.get("Cookie", "")
+        for part in raw.split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                if k == name:
+                    return v
+        return ""
+
+    def _client_ip(self):
+        xff = self.headers.get("X-Forwarded-For", "")
+        ip = xff.split(",")[0].strip()
+        return ip or (self.client_address[0] if self.client_address else "unknown")
+
+    def _current_user(self):
+        token = self._cookie(SESSION_COOKIE)
+        if not token or len(token) > 128:
+            return None
+        return db_get_session_user(token)
+
+    def _session_cookie_header(self, token):
+        val = "%s=%s; HttpOnly; Path=/; Max-Age=%d; SameSite=Lax" % (
+            SESSION_COOKIE, token, SESSION_TTL)
+        if self._is_https():
+            val += "; Secure"
+        return ("Set-Cookie", val)
+
+    def _clear_cookie_header(self):
+        val = "%s=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax" % SESSION_COOKIE
+        if self._is_https():
+            val += "; Secure"
+        return ("Set-Cookie", val)
+
+    def _public_user(self, row):
+        return {"id": row["id"], "login": row["login"],
+                "displayName": row["display_name"]}
+
+    def _me_payload(self, user):
+        if not user:
+            return {"user": None}
+        grades_used, analyzes_used = db_usage_get(user["id"], today_cn())
+        return {
+            "user": self._public_user(user),
+            "quota": {
+                "grades": {"used": grades_used, "limit": GRADE_DAILY_LIMIT},
+                "analyzes": {"used": analyzes_used, "limit": ANALYZE_DAILY_LIMIT},
+            },
+        }
 
     def _send_static(self, rel):
         rel = rel.lstrip("/") or "index.html"
@@ -873,7 +1200,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -885,18 +1212,42 @@ class Handler(BaseHTTPRequestHandler):
                 "base_url": SERVER_BASE_URL,
                 "model": SERVER_MODEL,
                 "providers": PROVIDERS,
+                "auth": {
+                    "loginRequired": bool(SERVER_API_KEY) and not ALLOW_ANON_SERVER_AI,
+                    "gradeLimit": GRADE_DAILY_LIMIT,
+                    "analyzeLimit": ANALYZE_DAILY_LIMIT,
+                },
             })
+            return
+        if path == "/api/auth/me":
+            self._send_json({"ok": True, **self._me_payload(self._current_user())})
+            return
+        if path == "/api/essays":
+            self.handle_essay_list()
+            return
+        if path.startswith("/api/essays/"):
+            self.handle_essay_get(path.rsplit("/", 1)[-1])
+            return
+        if path == "/api/draft":
+            self.handle_draft_get()
             return
         self._send_static(path)
 
-    def _read_body(self):
+    def do_DELETE(self):
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/essays/"):
+            self.handle_essay_delete(path.rsplit("/", 1)[-1])
+            return
+        self.send_error(404, "Not Found")
+
+    def _read_body(self, limit=MAX_BODY):
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             length = 0
-        if length <= 0 or length > MAX_BODY:
+        if length <= 0 or length > limit:
             self._send_json({"ok": False, "code": "bad_request",
-                             "message": "请求为空或超过 60KB 上限"}, 400)
+                             "message": "请求为空或超过 %dKB 上限" % (limit // 1024)}, 400)
             return None
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
@@ -913,6 +1264,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
+        auth_paths = ("/api/auth/register", "/api/auth/login", "/api/auth/logout")
+        if path in auth_paths:
+            data = self._read_body(16 * 1024)
+            if data is not None:
+                self.handle_auth(path, data)
+            return
+        if path == "/api/essays":
+            data = self._read_body(900 * 1024)  # 报告 JSON 可能较大
+            if data is not None:
+                self.handle_essay_save(data)
+            return
+        if path == "/api/draft":
+            data = self._read_body(120 * 1024)
+            if data is not None:
+                self.handle_draft_save(data)
+            return
         if path not in ("/api/grade", "/api/analyze"):
             self.send_error(404, "Not Found")
             return
@@ -926,10 +1293,217 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.handle_grade(data, api_key, base_url, model)
 
+    # ---------------- 注册 / 登录 / 退出 ----------------
+
+    def handle_auth(self, path, data):
+        if path == "/api/auth/logout":
+            token = self._cookie(SESSION_COOKIE)
+            if token:
+                db_delete_session(token)
+            self._send_json({"ok": True},
+                            extra_headers=[self._clear_cookie_header()])
+            return
+
+        ip = self._client_ip()
+        if not auth_attempt_gate(ip):
+            self._api_error("too_many_attempts",
+                            "尝试次数过多，请 10 分钟后再试。", 429)
+            return
+
+        login = str(data.get("login") or "").strip()
+        password = str(data.get("password") or "")
+        if not LOGIN_RE.match(login):
+            self._api_error("bad_login", "账号需为 3-20 位，可含中英文、数字、下划线或连字符。")
+            return
+        if not (6 <= len(password) <= 72):
+            self._api_error("bad_password", "密码长度需为 6-72 位。")
+            return
+
+        if path == "/api/auth/register":
+            name = str(data.get("displayName") or "").strip() or login
+            if not NAME_RE.match(name):
+                name = login
+            uid = db_create_user(login, password, name[:20])
+            if uid is None:
+                self._api_error("login_taken", "该账号已被注册，请换一个或直接登录。", 409)
+                return
+            user = db_get_user(uid)
+        else:
+            user = db_get_user_by_login(login)
+            if not user or not verify_password(password, user["pw_hash"]):
+                self._api_error("bad_credentials", "账号或密码不正确。", 401)
+                return
+
+        token = db_create_session(user["id"])
+        self._send_json({"ok": True, **self._me_payload(user)},
+                        extra_headers=[self._session_cookie_header(token)])
+
+    # ---------------- 历史报告 ----------------
+
+    @staticmethod
+    def _clip(v, maxlen):
+        return str(v if v is not None else "")[:maxlen]
+
+    def handle_essay_save(self, data):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "登录后才能保存历史报告。", 401)
+            return
+        report = data.get("report")
+        if not isinstance(report, dict):
+            self._api_error("bad_report", "缺少批改报告内容。")
+            return
+        score = data.get("score")
+        try:
+            score = int(score)
+        except (TypeError, ValueError):
+            score = None
+        if score is not None:
+            score = max(0, min(70, score))
+        report_json = json.dumps(report, ensure_ascii=False)
+        if len(report_json.encode("utf-8")) > 700 * 1024:
+            self._api_error("too_large", "报告内容超过保存上限。", 413)
+            return
+        now = int(time.time())
+        essay_id = db_create_essay(
+            user["id"],
+            self._clip(data.get("title"), 40),
+            self._clip(data.get("prompt"), 8000),
+            self._clip(data.get("text"), 20000),
+            score,
+            self._clip(data.get("bandLabel"), 6),
+            self._clip(data.get("bandSub"), 1),
+            self._clip(data.get("summary"), 600),
+            report_json,
+            self._clip(data.get("model"), 40),
+            now)
+        db_clear_draft(user["id"])  # 已成稿：自动草稿作废
+        self._send_json({"ok": True, "id": essay_id, "createdAt": now})
+
+    def handle_essay_list(self):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "请先登录。", 401)
+            return
+        items = db_list_essays(user["id"])
+        for it in items:
+            it["textLen"] = len(it.pop("essay_text") or "")
+        self._send_json({"ok": True, "essays": items})
+
+    def handle_essay_get(self, raw_id):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "请先登录。", 401)
+            return
+        try:
+            essay_id = int(raw_id)
+        except ValueError:
+            self._api_error("bad_id", "记录不存在。", 404)
+            return
+        rec = db_get_essay(user["id"], essay_id)
+        if not rec:
+            self._api_error("not_found", "记录不存在或已被删除。", 404)
+            return
+        try:
+            rec["report"] = json.loads(rec.pop("report_json"))
+        except ValueError:
+            self._api_error("bad_data", "报告内容已损坏。", 500)
+            return
+        rec.pop("user_id", None)
+        self._send_json({"ok": True, "essay": rec})
+
+    def handle_essay_delete(self, raw_id):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "请先登录。", 401)
+            return
+        try:
+            essay_id = int(raw_id)
+        except ValueError:
+            self._api_error("bad_id", "记录不存在。", 404)
+            return
+        if db_delete_essay(user["id"], essay_id):
+            self._send_json({"ok": True})
+        else:
+            self._api_error("not_found", "记录不存在或已被删除。", 404)
+
+    # ---------------- 作文草稿（每账号一份自动云存） ----------------
+
+    def handle_draft_save(self, data):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "请先登录。", 401)
+            return
+        draft = data.get("draft")
+        now = int(time.time())
+        if draft is None:
+            db_clear_draft(user["id"])
+            self._send_json({"ok": True})
+            return
+        if not isinstance(draft, dict):
+            self._api_error("bad_draft", "草稿内容格式不正确。")
+            return
+        clean = {
+            "prompt": self._clip(draft.get("prompt"), 8000),
+            "title": self._clip(draft.get("title"), 40),
+            "type": self._clip(draft.get("type"), 10) or "议论文",
+            "target": self._clip(draft.get("target"), 4) or "800",
+            "text": self._clip(draft.get("text"), 20000),
+        }
+        db_save_draft(user["id"], json.dumps(clean, ensure_ascii=False), now)
+        self._send_json({"ok": True, "updatedAt": now})
+
+    def handle_draft_get(self):
+        user = self._current_user()
+        if not user:
+            self._api_error("login_required", "请先登录。", 401)
+            return
+        rec = db_get_draft(user["id"])
+        if not rec:
+            self._send_json({"ok": True, "draft": None})
+            return
+        try:
+            draft = json.loads(rec["data_json"])
+        except ValueError:
+            draft = None
+        self._send_json({"ok": True, "draft": draft, "updatedAt": rec["updated_at"]})
+
+    def _gate_server_key(self, data, kind):
+        """用【服务端 Key】调 AI 时校验登录与每日限额。
+        返回 (user, counted, blocked)：
+          counted=True 表示本次走的是服务端共享额度，成功后要 +1；
+          浏览器自带 Key（花自己的钱）一律放行、不计数。"""
+        client_key = str((data.get("settings") or {}).get("apiKey") or "").strip()
+        user = self._current_user()
+        # 自带 Key 不限制；显式放开限制时不限制；服务器自己没配 Key 时无额度可保护
+        if client_key or ALLOW_ANON_SERVER_AI or not SERVER_API_KEY:
+            return user, False, False
+        if not user:
+            self._api_error(
+                "login_required",
+                "使用网站共享的 AI 额度需要先登录账号；也可以在右上角“AI 设置”里填写自己的 API Key。",
+                401)
+            return None, False, True
+        limit = GRADE_DAILY_LIMIT if kind == "grade" else ANALYZE_DAILY_LIMIT
+        label = "批改" if kind == "grade" else "AI 审题"
+        used = db_usage_get(user["id"], today_cn())[0 if kind == "grade" else 1]
+        if limit and used >= limit:
+            self._send_json({
+                "ok": False, "code": "quota_exceeded",
+                "message": "今日%s次数已达每日上限（%d 次）。配额按北京时间每日 0 点刷新；"
+                           "也可以在“AI 设置”中填写自己的 API Key 继续使用。" % (label, limit),
+                "limit": limit, "used": used,
+            }, 429)
+            return None, False, True
+        return user, True, False
+
     def handle_grade(self, data, api_key, base_url, model):
         text = (data.get("text") or "").strip()
         if len(text) < 20:
             self._send_json({"ok": False, "code": "too_short", "message": "作文内容太短"}, 400)
+            return
+        user, counted, blocked = self._gate_server_key(data, "grade")
+        if blocked:
             return
         if not api_key:
             self._send_json({"ok": False, "code": "no_key", "message": "尚未配置 API Key"}, 503)
@@ -946,6 +1520,8 @@ class Handler(BaseHTTPRequestHandler):
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
             return
+        if counted and user:
+            db_usage_bump(user["id"], today_cn(), "grades")
         self._send_json({"ok": True, "report": report,
                          "engine": "ai", "model": model, "elapsed": round(time.time() - t0, 1)})
 
@@ -956,7 +1532,7 @@ class Handler(BaseHTTPRequestHandler):
                              "message": "请先粘贴作文题目材料（至少 10 个字）"}, 400)
             return
 
-        # 未配置 Key：本地规则兜底
+        # 未配置 Key：本地规则兜底（不需要登录、不占额度）
         if not api_key:
             self._send_json({"ok": True, "report": local_analyze(material),
                              "engine": "local", "model": "本地规则审题", "elapsed": 0})
@@ -964,6 +1540,10 @@ class Handler(BaseHTTPRequestHandler):
         if not base_url or not model:
             self._send_json({"ok": True, "report": local_analyze(material),
                              "engine": "local", "model": "本地规则审题", "elapsed": 0})
+            return
+
+        user, counted, blocked = self._gate_server_key(data, "analyze")
+        if blocked:
             return
 
         t0 = time.time()
@@ -978,6 +1558,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "report": fallback,
                              "engine": "local", "model": "本地规则审题", "elapsed": round(time.time() - t0, 1)})
             return
+        if counted and user:
+            db_usage_bump(user["id"], today_cn(), "analyzes")
         self._send_json({"ok": True, "report": report,
                          "engine": "ai", "model": model, "elapsed": round(time.time() - t0, 1)})
 
@@ -999,6 +1581,7 @@ def lan_ip():
 
 
 def main():
+    init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     local_ip = lan_ip()
     on_cloud = bool(os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
@@ -1013,6 +1596,12 @@ def main():
     print(" 满分 70 分 · 上海卷五类档 · 含审题指导 · 逐句逻辑批改")
     print(" 大模型服务端配置： %s" % ("已就绪（环境变量/.env）" if SERVER_API_KEY
                                   else "未配置（审题可用本地规则，AI 批改需在网页设置 Key）"))
+    if SERVER_API_KEY and not ALLOW_ANON_SERVER_AI:
+        print(" 账号策略： 使用共享 AI 需登录 · 每日批改 %s 次 / 审题 %s 次（0=不限）"
+              % (GRADE_DAILY_LIMIT or "不限", ANALYZE_DAILY_LIMIT or "不限"))
+    else:
+        print(" 账号策略： 开放使用（账号仍可登录以同步历史与草稿）")
+    print(" 用户数据库： %s" % DB_PATH)
     print(" 按 Ctrl+C 停止")
     print("=" * 60)
     try:
