@@ -1008,6 +1008,19 @@ textarea {
 .auth-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .auth-secure-note { font-size: 12px; color: var(--ink-3); }
 .auth-foot .btn-primary { min-width: 96px; }
+/* 手机验证码行 */
+.auth-sms-row { display: flex; gap: 10px; }
+.auth-sms-row input { flex: 1 1 auto; min-width: 0; }
+.btn-sms {
+  flex: 0 0 auto; padding: 0 14px; border: 1.5px solid var(--primary);
+  background: #fff; color: var(--primary-dark); border-radius: 10px;
+  font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  white-space: nowrap; transition: all .15s;
+}
+.btn-sms:hover:not(:disabled) { background: var(--primary); color: #fff; }
+.btn-sms:disabled { color: var(--ink-3); border-color: var(--line); cursor: not-allowed; background: #f8fafc; }
+.modal-tip.ok { color: #16a34a; }
+.auth-tab[hidden] { display: none; }
 
 /* 历史记录弹窗 */
 .modal-history { max-width: 680px; }

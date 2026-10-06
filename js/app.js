@@ -907,12 +907,23 @@
   var authLoginEl = $('auth-login'),
     authPwEl = $('auth-pw'),
     authPw2El = $('auth-pw2'),
+    authPhoneEl = $('auth-phone'),
+    authCodeEl = $('auth-code'),
+    authSendEl = $('auth-send'),
     authMsgEl = $('auth-msg'),
     authSubmitEl = $('auth-submit'),
-    pw2Field = $('auth-pw2-field');
+    loginField = $('auth-login-field'),
+    pwField = $('auth-pw-field'),
+    pw2Field = $('auth-pw2-field'),
+    phoneField = $('auth-phone-field'),
+    codeField = $('auth-code-field'),
+    tabLogin = $('auth-tab-login'),
+    tabSms = $('auth-tab-sms'),
+    tabRegister = $('auth-tab-register');
   var historyListEl = $('history-list');
   var cloudNoteEl = $('cloud-save-note');
   var authMode = 'login';
+  var smsTimer = null, smsLeft = 0;
 
   /* ---------- 轻提示 ---------- */
   function toast(msg, type) {
@@ -982,49 +993,143 @@
     if (menu) menu.hidden = true;
   });
 
-  /* ---------- 登录 / 注册弹窗 ---------- */
-  function setAuthMode(mode, msg) {
-    authMode = mode;
-    var isLogin = mode === 'login';
-    $('auth-tab-login').classList.toggle('active', isLogin);
-    $('auth-tab-register').classList.toggle('active', !isLogin);
-    $('auth-title').textContent = isLogin ? '登录账号' : '注册新账号';
-    authSubmitEl.textContent = isLogin ? '登录' : '注册并登录';
-    pw2Field.hidden = isLogin;
-    authPwEl.setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
+  /* ---------- 登录 / 注册 / 手机验证码弹窗 ---------- */
+  function showAuthMsg(msg, ok) {
     authMsgEl.textContent = msg || '';
+    authMsgEl.className = 'modal-tip' + (ok ? ' ok' : '');
+  }
+  function setAuthMode(mode, msg, ok) {
+    authMode = mode;
+    var isSms = mode === 'sms';
+    tabLogin.classList.toggle('active', mode === 'login');
+    tabSms.classList.toggle('active', isSms);
+    tabRegister.classList.toggle('active', mode === 'register');
+    loginField.hidden = isSms;
+    pwField.hidden = isSms;
+    pw2Field.hidden = mode !== 'register';
+    phoneField.hidden = !isSms;
+    codeField.hidden = !isSms;
+    $('auth-title').textContent =
+      isSms ? '手机验证码登录' : (mode === 'register' ? '注册新账号' : '登录账号');
+    authSubmitEl.textContent =
+      isSms ? '登录 / 注册' : (mode === 'register' ? '注册并登录' : '登录');
+    authPwEl.setAttribute('autocomplete', mode === 'register' ? 'new-password' : 'current-password');
+    showAuthMsg(msg || '', !!ok);
   }
   function openAuth(mode, msg) {
+    if (mode === 'sms' && tabSms.hidden) mode = 'login'; // 服务端未开通短信时回退
     setAuthMode(mode || 'login', msg || '');
     authModal.hidden = false;
-    setTimeout(function () { authLoginEl.focus(); }, 30);
+    setTimeout(function () {
+      (mode === 'sms' ? authPhoneEl : authLoginEl).focus();
+    }, 30);
   }
   function closeAuth() {
     authModal.hidden = true;
-    authMsgEl.textContent = '';
+    showAuthMsg('');
   }
-  $('auth-tab-login').addEventListener('click', function () { setAuthMode('login'); });
-  $('auth-tab-register').addEventListener('click', function () { setAuthMode('register'); });
+  tabLogin.addEventListener('click', function () { setAuthMode('login'); });
+  tabSms.addEventListener('click', function () { setAuthMode('sms'); });
+  tabRegister.addEventListener('click', function () { setAuthMode('register'); });
   $('auth-close').addEventListener('click', closeAuth);
   authModal.addEventListener('click', function (e) { if (e.target === authModal) closeAuth(); });
   [authLoginEl, authPwEl, authPw2El].forEach(function (el) {
     el.addEventListener('keydown', function (e) { if (e.key === 'Enter') submitAuth(); });
   });
+  authCodeEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') submitAuth();
+  });
+  authPhoneEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); sendSmsCode(); }
+  });
   authSubmitEl.addEventListener('click', submitAuth);
+  authSendEl.addEventListener('click', sendSmsCode);
+
+  function resetSmsBtn() {
+    clearInterval(smsTimer);
+    smsTimer = null;
+    smsLeft = 0;
+    authSendEl.disabled = false;
+    authSendEl.textContent = '获取验证码';
+  }
+  function startSmsCountdown(sec) {
+    smsLeft = sec;
+    authSendEl.disabled = true;
+    authSendEl.textContent = smsLeft + ' 秒后重发';
+    smsTimer = setInterval(function () {
+      smsLeft -= 1;
+      if (smsLeft <= 0) { resetSmsBtn(); }
+      else { authSendEl.textContent = smsLeft + ' 秒后重发'; }
+    }, 1000);
+  }
+  function sendSmsCode() {
+    var phone = authPhoneEl.value.replace(/\D/g, '');
+    authPhoneEl.value = phone;
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      showAuthMsg('请输入正确的 11 位手机号。');
+      return;
+    }
+    authSendEl.disabled = true;
+    authSendEl.textContent = '发送中…';
+    EssayAuth.sendSmsCode(phone).then(function (d) {
+      showAuthMsg('验证码已发送，5 分钟内有效；如未收到请 1 分钟后重新获取。', true);
+      if (d.debugCode) {
+        authCodeEl.value = d.debugCode;
+        toast('调试模式：验证码已自动填入', 'ok');
+      } else {
+        toast('验证码已发送至 ' + phone, 'ok');
+      }
+      startSmsCountdown(d.resendAfter || 60);
+    }).catch(function (err) {
+      resetSmsBtn();
+      showAuthMsg(err.message || '验证码发送失败，请稍后重试。');
+    });
+  }
+
+  function submitSmsAuth() {
+    var phone = authPhoneEl.value.replace(/\D/g, '');
+    var code = authCodeEl.value.replace(/\D/g, '');
+    authPhoneEl.value = phone;
+    authCodeEl.value = code;
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      showAuthMsg('请输入正确的 11 位手机号。');
+      return;
+    }
+    if (!/^\d{6}$/.test(code)) {
+      showAuthMsg('请输入 6 位数字验证码。');
+      return;
+    }
+    authSubmitEl.disabled = true;
+    authSubmitEl.textContent = '验证中…';
+    EssayAuth.loginSms(phone, code).then(function (d) {
+      closeAuth();
+      authPhoneEl.value = '';
+      authCodeEl.value = '';
+      resetSmsBtn();
+      toast(d.newUser ? '验证成功，已用该手机号自动注册' : '登录成功', 'ok');
+      restoreCloudDraft(true);
+    }).catch(function (err) {
+      showAuthMsg(err.message || '验证失败，请检查手机号与验证码。');
+    }).then(function () {
+      authSubmitEl.disabled = false;
+      authSubmitEl.textContent = '登录 / 注册';
+    });
+  }
 
   function submitAuth() {
+    if (authMode === 'sms') { submitSmsAuth(); return; }
     var loginName = authLoginEl.value.trim();
     var pw = authPwEl.value;
     if (loginName.length < 3 || loginName.length > 20) {
-      authMsgEl.textContent = '账号需为 3-20 位（中英文、数字、下划线或连字符）。';
+      showAuthMsg('账号需为 3-20 位（中英文、数字、下划线或连字符）。');
       return;
     }
     if (pw.length < 6 || pw.length > 72) {
-      authMsgEl.textContent = '密码长度需为 6-72 位。';
+      showAuthMsg('密码长度需为 6-72 位。');
       return;
     }
     if (authMode === 'register' && pw !== authPw2El.value) {
-      authMsgEl.textContent = '两次输入的密码不一致。';
+      showAuthMsg('两次输入的密码不一致。');
       return;
     }
     var isLogin = authMode === 'login';
@@ -1040,7 +1145,7 @@
       toast(isLogin ? '登录成功' : '注册成功，已自动登录', 'ok');
       restoreCloudDraft(true);
     }).catch(function (err) {
-      authMsgEl.textContent = err.message || '操作失败，请稍后重试。';
+      showAuthMsg(err.message || '操作失败，请稍后重试。');
     }).then(function () {
       authSubmitEl.disabled = false;
       authSubmitEl.textContent = isLogin ? '登录' : '注册并登录';
@@ -1239,6 +1344,7 @@
   EssayAI.fetchConfig().then(function (cfg) {
     serverCfg = cfg;
     refreshHint();
+    tabSms.hidden = !(cfg.auth && cfg.auth.smsEnabled);
   });
   EssayAuth.refreshMe().then(function (res) {
     if (res.user) restoreCloudDraft(false); // 已登录且本机表单为空：静默恢复云端草稿

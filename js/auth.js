@@ -1,8 +1,8 @@
 /* ============================================================
- * 账号客户端：注册 / 登录 / 退出 / 当前会话
+ * 账号客户端：注册 / 登录 / 退出 / 当前会话 / 手机验证码登录
  *  - 会话由服务端 HttpOnly Cookie 维持，JS 读不到令牌本身
  *  - 云端历史报告、作文草稿、每日配额查询
- * 上海高考思辨议论文批改 · split25
+ * 上海高考思辨议论文批改 · split26
  * ============================================================ */
 (function (global) {
   'use strict';
@@ -70,6 +70,17 @@
     });
   }
 
+  /* ---------------- 手机验证码 ---------------- */
+
+  function sendSmsCode(phone) {
+    return request('POST', '/api/auth/sms/send', { phone: phone });
+  }
+
+  function loginSms(phone, code) {
+    return request('POST', '/api/auth/sms/login', { phone: phone, code: code })
+      .then(function (d) { setMe(d); return d; });
+  }
+
   function user() { return me && me.user ? me.user : null; }
   function quota() { return me && me.quota ? me.quota : null; }
 
@@ -116,6 +127,8 @@
     login: login,
     register: register,
     logout: logout,
+    sendSmsCode: sendSmsCode,
+    loginSms: loginSms,
     user: user,
     quota: quota,
     onChange: onChange,

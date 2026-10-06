@@ -20,6 +20,7 @@
 启动：  python server.py      然后浏览器打开 http://127.0.0.1:8000/
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -30,7 +31,9 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -102,8 +105,9 @@ SERVER_MODEL = (
 #  - 历史批改报告、作文草稿随账号云端保存
 #  - 用【服务端 Key】（.env/环境变量）调用大模型时：要求登录 + 每账号每日限额；
 #    浏览器自带 Key 的请求不限制（用户花的是自己的额度）
-#  - 手机号验证码 / 微信扫码登录需要资质与备案，当前版本先落地账号密码，
-#    users 表已预留 phone 字段，将来可平滑接入
+#  - 支持阿里云短信验证码登录（手机号首次验证即自动注册）；未配置阿里云时该入口
+#    自动停用，SMS_DEBUG=1 可在本机调试时直接返回验证码
+#  - 微信扫码登录需企业资质，暂未接入
 # ============================================================
 
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -121,6 +125,21 @@ ANALYZE_DAILY_LIMIT = int(os.environ.get("ANALYZES_PER_DAY", "60") or "0")
 # 同一 IP 登录/注册尝试频率限制（10 分钟内最多 20 次）
 AUTH_WINDOW_SEC = 600
 AUTH_MAX_ATTEMPTS = 20
+
+# ---- 阿里云短信验证码登录（全部为可选环境变量，未配置则短信入口不可用）----
+ALIYUN_SMS_AK = os.environ.get("ALIYUN_SMS_ACCESS_KEY_ID", "").strip()
+ALIYUN_SMS_SK = os.environ.get("ALIYUN_SMS_ACCESS_KEY_SECRET", "").strip()
+ALIYUN_SMS_SIGN = os.environ.get("ALIYUN_SMS_SIGN_NAME", "").strip()
+ALIYUN_SMS_TEMPLATE = os.environ.get("ALIYUN_SMS_TEMPLATE_CODE", "").strip()
+ALIYUN_SMS_ENABLED = bool(ALIYUN_SMS_AK and ALIYUN_SMS_SK
+                          and ALIYUN_SMS_SIGN and ALIYUN_SMS_TEMPLATE)
+# 本机/局域网未配阿里云时，设 SMS_DEBUG=1 可让接口直接把验证码返回给页面（仅调试用）
+SMS_DEBUG = os.environ.get("SMS_DEBUG", "0").strip() in ("1", "true", "yes")
+SMS_CODE_TTL = 300          # 验证码有效期 5 分钟
+SMS_RESEND_SEC = 60         # 同一手机号两次发送至少间隔 60 秒
+SMS_VERIFY_MAX = 5          # 单个验证码最多输错 5 次
+SMS_DAILY_PER_PHONE = 10    # 同一手机号 24 小时最多发送 10 条
+SMS_DAILY_PER_IP = 20       # 同一 IP 24 小时最多发送 20 条
 
 DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -165,6 +184,20 @@ CREATE TABLE IF NOT EXISTS usage_days (
   analyzes INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS sms_codes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone      TEXT NOT NULL,
+  code_hash  TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  consumed   INTEGER NOT NULL DEFAULT 0,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  ip         TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sms_phone_time ON sms_codes(phone, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sms_ip_time ON sms_codes(ip, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone
+  ON users(phone) WHERE phone IS NOT NULL AND phone <> '';
 """
 
 db = None
@@ -229,6 +262,33 @@ def db_create_user(login, pw, display_name):
 def db_get_user_by_login(login):
     with db_lock:
         return db.execute("SELECT * FROM users WHERE login=?", (login,)).fetchone()
+
+
+def db_get_user_by_phone(phone):
+    with db_lock:
+        return db.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+
+
+def db_bind_phone(uid, phone):
+    with db_lock:
+        db.execute("UPDATE users SET phone=? WHERE id=?", (phone, uid))
+        db.commit()
+
+
+def db_create_phone_user(phone):
+    """手机号验证码首次登录：自动注册（无密码，pw_hash 存空串）。
+    login 直接用手机号；login 冲突（有人把手机号当账号名注册过）时返回 None。"""
+    now = int(time.time())
+    display = phone[:3] + "****" + phone[-4:]
+    try:
+        with db_lock:
+            cur = db.execute(
+                "INSERT INTO users(login, display_name, phone, pw_hash, created_at) "
+                "VALUES(?,?,?,?,?)", (phone, display, phone, "", now))
+            db.commit()
+            return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None
 
 
 def db_get_user(uid):
@@ -356,6 +416,107 @@ def db_usage_bump(uid, day, column):
             "ON CONFLICT(user_id, day) DO UPDATE SET " + column + "=" + column + "+1",
             (uid, day))
         db.commit()
+
+
+# ---------------- 手机验证码 ----------------
+
+PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
+
+
+def db_sms_create(phone, code, ip, ttl):
+    now = int(time.time())
+    with db_lock:
+        db.execute(
+            "INSERT INTO sms_codes(phone, code_hash, expires_at, consumed, attempts, "
+            "ip, created_at) VALUES(?,?,?,0,0,?,?)",
+            (phone, hash_password(code), now + ttl, ip, now))
+        # 顺手清理一天前已过期的记录，避免表无限增长
+        db.execute("DELETE FROM sms_codes WHERE expires_at < ?", (now - 86400,))
+        db.commit()
+
+
+def db_sms_last_created(phone):
+    with db_lock:
+        row = db.execute(
+            "SELECT created_at FROM sms_codes WHERE phone=? ORDER BY id DESC LIMIT 1",
+            (phone,)).fetchone()
+        return row["created_at"] if row else 0
+
+
+def db_sms_count_24h(phone=None, ip=None):
+    sql = "SELECT COUNT(*) AS c FROM sms_codes WHERE created_at >= ?"
+    args = [int(time.time()) - 86400]
+    if phone is not None:
+        sql += " AND phone=?"
+        args.append(phone)
+    if ip is not None:
+        sql += " AND ip=?"
+        args.append(ip)
+    with db_lock:
+        return db.execute(sql, args).fetchone()["c"]
+
+
+def db_sms_latest_active(phone):
+    now = int(time.time())
+    with db_lock:
+        return db.execute(
+            "SELECT * FROM sms_codes WHERE phone=? AND consumed=0 AND expires_at>? "
+            "ORDER BY id DESC LIMIT 1", (phone, now)).fetchone()
+
+
+def db_sms_mark_consumed(sms_id):
+    with db_lock:
+        db.execute("UPDATE sms_codes SET consumed=1 WHERE id=?", (sms_id,))
+        db.commit()
+
+
+def db_sms_add_attempt(sms_id):
+    with db_lock:
+        db.execute("UPDATE sms_codes SET attempts=attempts+1 WHERE id=?", (sms_id,))
+        db.commit()
+
+
+def _aliyun_pct_encode(s):
+    """阿里云 POP 网关要求的 RFC3986 编码：urllib 默认保留字符集与之相同。"""
+    return urllib.parse.quote(str(s), safe="~")
+
+
+def send_aliyun_sms(phone, code):
+    """调用阿里云 dysmsapi（2017-05-25）SendSms，仅用标准库完成 RPC 签名。
+    返回 (ok, aliyun_code, message)。"""
+    params = {
+        "PhoneNumbers": phone,
+        "SignName": ALIYUN_SMS_SIGN,
+        "TemplateCode": ALIYUN_SMS_TEMPLATE,
+        "TemplateParam": json.dumps({"code": code}, ensure_ascii=False),
+        "AccessKeyId": ALIYUN_SMS_AK,
+        "SignatureMethod": "HMAC-SHA1",
+        "SignatureNonce": uuid.uuid4().hex,
+        "SignatureVersion": "1.0",
+        "Timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "Format": "JSON",
+        "Version": "2017-05-25",
+        "Action": "SendSms",
+        "RegionId": "cn-hangzhou",
+    }
+    canonical = "&".join(
+        "%s=%s" % (_aliyun_pct_encode(k), _aliyun_pct_encode(v))
+        for k, v in sorted(params.items()))
+    string_to_sign = "GET&%s&%s" % (_aliyun_pct_encode("/"), _aliyun_pct_encode(canonical))
+    digest = hmac.new((ALIYUN_SMS_SK + "&").encode("utf-8"),
+                      string_to_sign.encode("utf-8"), hashlib.sha1).digest()
+    signature = base64.b64encode(digest).decode("utf-8")
+    url = "https://dysmsapi.aliyuncs.com/?" + canonical + \
+          "&Signature=" + _aliyun_pct_encode(signature)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, ValueError, OSError) as e:
+        return False, "network_error", "短信服务连接失败：%s" % e
+    code_resp = str(result.get("Code") or "")
+    if code_resp == "OK":
+        return True, "OK", result.get("Message") or "OK"
+    return False, code_resp or "unknown", str(result.get("Message") or "短信发送失败")
 
 
 # ============================================================
@@ -1162,7 +1323,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _public_user(self, row):
         return {"id": row["id"], "login": row["login"],
-                "displayName": row["display_name"]}
+                "displayName": row["display_name"],
+                "phone": row["phone"] or ""}
 
     def _me_payload(self, user):
         if not user:
@@ -1216,6 +1378,7 @@ class Handler(BaseHTTPRequestHandler):
                     "loginRequired": bool(SERVER_API_KEY) and not ALLOW_ANON_SERVER_AI,
                     "gradeLimit": GRADE_DAILY_LIMIT,
                     "analyzeLimit": ANALYZE_DAILY_LIMIT,
+                    "smsEnabled": ALIYUN_SMS_ENABLED or SMS_DEBUG,
                 },
             })
             return
@@ -1264,7 +1427,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        auth_paths = ("/api/auth/register", "/api/auth/login", "/api/auth/logout")
+        auth_paths = ("/api/auth/register", "/api/auth/login", "/api/auth/logout",
+                      "/api/auth/sms/send", "/api/auth/sms/login")
         if path in auth_paths:
             data = self._read_body(16 * 1024)
             if data is not None:
@@ -1296,6 +1460,12 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- 注册 / 登录 / 退出 ----------------
 
     def handle_auth(self, path, data):
+        if path == "/api/auth/sms/send":
+            self.handle_sms_send(data)
+            return
+        if path == "/api/auth/sms/login":
+            self.handle_sms_login(data)
+            return
         if path == "/api/auth/logout":
             token = self._cookie(SESSION_COOKIE)
             if token:
@@ -1330,12 +1500,118 @@ class Handler(BaseHTTPRequestHandler):
             user = db_get_user(uid)
         else:
             user = db_get_user_by_login(login)
-            if not user or not verify_password(password, user["pw_hash"]):
-                self._api_error("bad_credentials", "账号或密码不正确。", 401)
+            if not user or not user["pw_hash"] or not verify_password(password, user["pw_hash"]):
+                if user is not None and not user["pw_hash"]:
+                    self._api_error("sms_only_account",
+                                    "该账号通过手机验证码登录，未设置密码，请改用验证码登录。", 401)
+                else:
+                    self._api_error("bad_credentials", "账号或密码不正确。", 401)
                 return
 
         token = db_create_session(user["id"])
         self._send_json({"ok": True, **self._me_payload(user)},
+                        extra_headers=[self._session_cookie_header(token)])
+
+    # ---------------- 手机验证码登录 ----------------
+
+    def handle_sms_send(self, data):
+        ip = self._client_ip()
+        if not auth_attempt_gate(ip):
+            self._api_error("too_many_attempts", "尝试次数过多，请 10 分钟后再试。", 429)
+            return
+        phone = str(data.get("phone") or "").strip()
+        if not PHONE_RE.match(phone):
+            self._api_error("bad_phone", "请输入正确的 11 位手机号。")
+            return
+        now = int(time.time())
+        last = db_sms_last_created(phone)
+        if last and now - last < SMS_RESEND_SEC:
+            self._api_error("sms_too_frequent",
+                            "发送太频繁，请 %d 秒后再获取验证码。"
+                            % (SMS_RESEND_SEC - (now - last)), 429)
+            return
+        if db_sms_count_24h(phone=phone) >= SMS_DAILY_PER_PHONE:
+            self._api_error("sms_phone_limit",
+                            "该手机号今日获取验证码次数已达上限，请明天再试。", 429)
+            return
+        if db_sms_count_24h(ip=ip) >= SMS_DAILY_PER_IP:
+            self._api_error("sms_ip_limit",
+                            "当前网络今日发送验证码次数已达上限，请明天再试。", 429)
+            return
+
+        code = "%06d" % secrets.randbelow(1_000_000)
+        db_sms_create(phone, code, ip, SMS_CODE_TTL)
+
+        if ALIYUN_SMS_ENABLED:
+            ok, ali_code, msg = send_aliyun_sms(phone, code)
+            if not ok:
+                # 阿里云频控等错误直接透出可理解的提示
+                friendly = msg
+                if ali_code == "isv.BUSINESS_LIMIT_CONTROL":
+                    friendly = "发送过于频繁，请稍后再试（同一号码 1 分钟 1 条、1 小时 5 条、1 天 10 条）。"
+                elif ali_code in ("isv.MOBILE_NUMBER_ILLEGAL", "InvalidPhoneNumber"):
+                    friendly = "手机号格式不正确，请检查后重试。"
+                self._api_error("sms_send_failed", friendly, 502)
+                return
+            self._send_json({"ok": True, "ttl": SMS_CODE_TTL, "resendAfter": SMS_RESEND_SEC})
+            return
+        if SMS_DEBUG:
+            # 仅在未配置阿里云且显式开启调试时，把验证码返回给页面（本机/局域网测试用）
+            self._send_json({"ok": True, "ttl": SMS_CODE_TTL,
+                             "resendAfter": SMS_RESEND_SEC, "debugCode": code})
+            return
+        self._api_error("sms_not_configured",
+                        "手机验证码登录暂未开通：管理员需先配置阿里云短信服务。", 503)
+
+    def handle_sms_login(self, data):
+        ip = self._client_ip()
+        if not auth_attempt_gate(ip):
+            self._api_error("too_many_attempts", "尝试次数过多，请 10 分钟后再试。", 429)
+            return
+        phone = str(data.get("phone") or "").strip()
+        code = str(data.get("code") or "").strip()
+        if not PHONE_RE.match(phone):
+            self._api_error("bad_phone", "请输入正确的 11 位手机号。")
+            return
+        if not re.match(r"^\d{6}$", code):
+            self._api_error("bad_sms_code", "请输入 6 位数字验证码。")
+            return
+
+        rec = db_sms_latest_active(phone)
+        if not rec or not verify_password(code, rec["code_hash"]):
+            if rec:
+                db_sms_add_attempt(rec["id"])
+                left = SMS_VERIFY_MAX - rec["attempts"] - 1
+                if left <= 0:
+                    db_sms_mark_consumed(rec["id"])
+                    self._api_error("bad_sms_code",
+                                    "验证码错误次数过多，请重新获取验证码。", 401)
+                    return
+                self._api_error("bad_sms_code",
+                                "验证码不正确或已过期，还可尝试 %d 次。" % max(left, 0), 401)
+            else:
+                self._api_error("bad_sms_code", "验证码不正确或已过期，请重新获取。", 401)
+            return
+        db_sms_mark_consumed(rec["id"])
+
+        user = db_get_user_by_phone(phone)
+        is_new = user is None
+        if is_new:
+            # 没人绑过这个手机号：若有人曾把手机号当账号名注册，则绑定到该账号；
+            # 否则自动注册新账号
+            old = db_get_user_by_login(phone)
+            if old is not None and not old["phone"]:
+                db_bind_phone(old["id"], phone)
+                user = db_get_user(old["id"])
+            else:
+                uid = db_create_phone_user(phone)
+                user = db_get_user(uid) if uid else db_get_user_by_login(phone)
+        if user is None:  # 极端并发下兜底
+            self._api_error("login_failed", "登录失败，请重试。", 500)
+            return
+
+        token = db_create_session(user["id"])
+        self._send_json({"ok": True, "newUser": is_new, **self._me_payload(user)},
                         extra_headers=[self._session_cookie_header(token)])
 
     # ---------------- 历史报告 ----------------
@@ -1601,6 +1877,12 @@ def main():
               % (GRADE_DAILY_LIMIT or "不限", ANALYZE_DAILY_LIMIT or "不限"))
     else:
         print(" 账号策略： 开放使用（账号仍可登录以同步历史与草稿）")
+    if ALIYUN_SMS_ENABLED:
+        print(" 短信登录： 已启用阿里云短信（签名：%s）" % ALIYUN_SMS_SIGN)
+    elif SMS_DEBUG:
+        print(" 短信登录： 调试模式（验证码通过接口返回，不会真的发短信）")
+    else:
+        print(" 短信登录： 未启用（配置阿里云短信环境变量后开通）")
     print(" 用户数据库： %s" % DB_PATH)
     print(" 按 Ctrl+C 停止")
     print("=" * 60)
