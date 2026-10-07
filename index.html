@@ -1,10 +1,10 @@
-﻿﻿<!DOCTYPE html>
+﻿﻿﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split29" />
+<link rel="stylesheet" href="styles.css?v=split30" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -22,7 +22,6 @@
       <span class="mode-badge mode-ai" id="mode-badge">🤖 AI 模式</span>
       <button type="button" class="btn-history" id="btn-history" hidden>📂 历史记录</button>
       <div class="user-area" id="user-area"></div>
-      <button type="button" class="btn-settings" id="btn-settings">⚙ AI 设置</button>
     </div>
   </div>
 </header>
@@ -363,46 +362,8 @@
 </div>
 
 <footer class="site-footer">
-  <p id="footer-note">评分以 AI 大模型通读全文后的整体评判为准（上海卷五类档整体赋分，满分 70 分），聚焦审题、思辨深度与论证质量，不考核错别字、标点等字词细节。AI 批改经本机 127.0.0.1 后端转发至你配置的大模型，请妥善保管 API Key。</p>
+  <p id="footer-note">评分以 AI 大模型通读全文后的整体评判为准（上海卷五类档整体赋分，满分 70 分），聚焦审题、思辨深度与论证质量，不考核错别字、标点等字词细节。AI 批改由网站统一配置的大模型提供，作文内容仅在批改时经服务器转发至大模型接口，不作他用。</p>
 </footer>
-
-<!-- AI 设置弹窗 -->
-<div class="modal-mask" id="settings-modal" hidden>
-  <div class="modal">
-    <div class="modal-head">
-      <h3>🤖 AI 大模型设置</h3>
-      <button type="button" class="modal-close" id="modal-close" title="关闭">×</button>
-    </div>
-    <div class="modal-body">
-      <div class="server-status" id="server-status">正在检测服务端配置……</div>
-
-      <div class="field">
-        <label for="ai-provider">服务商（OpenAI 兼容接口）</label>
-        <select id="ai-provider"></select>
-      </div>
-      <div class="field">
-        <label for="ai-key">API Key</label>
-        <input type="password" id="ai-key" placeholder="sk-... 仅保存在本浏览器，填写后优先使用" autocomplete="off" />
-        <p class="field-hint">留空则使用服务器 .env 中的配置。申请地址见服务商开放平台。</p>
-      </div>
-      <div class="form-row">
-        <div class="field">
-          <label for="ai-base">接口地址 Base URL</label>
-          <input type="text" id="ai-base" placeholder="https://api.deepseek.com" />
-        </div>
-        <div class="field">
-          <label for="ai-model">模型名</label>
-          <input type="text" id="ai-model" placeholder="deepseek-chat" />
-        </div>
-      </div>
-      <p class="modal-tip" id="settings-msg"></p>
-    </div>
-    <div class="modal-foot">
-      <button type="button" class="btn btn-ghost" id="btn-clear-key">清除本浏览器 Key</button>
-      <button type="button" class="btn btn-primary" id="btn-save-settings">保存设置</button>
-    </div>
-  </div>
-</div>
 
 <!-- 登录 / 注册弹窗 -->
 <div class="modal-mask" id="auth-modal" hidden>
@@ -471,10 +432,11 @@
 <!-- 轻提示 -->
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
-<script src="js/file-upload.js?v=split29"></script>
-<script src="js/engine.js?v=split29"></script>
-<script src="js/ai-client.js?v=split29"></script>
-<script src="js/auth.js?v=split29"></script>
-<script src="js/app.js?v=split29"></script>
+<script src="js/file-upload.js?v=split30"></script>
+<script src="js/engine.js?v=split30"></script>
+<script src="js/ai-client.js?v=split30"></script>
+<script src="js/auth.js?v=split30"></script>
+<script src="js/app.js?v=split30"></script>
 </body>
 </html>
+

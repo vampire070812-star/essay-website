@@ -78,12 +78,15 @@
   }
 
   function getSettings() {
-    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }
-    catch (e) { return {}; }
+    // 已改为网站统一配置（服务端 .env），浏览器端不再保存/使用 API Key
+    return {};
   }
-  function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
-  function getMode() { return localStorage.getItem(MODE_KEY) === 'local' ? 'local' : 'ai'; }
-  function setMode(m) { localStorage.setItem(MODE_KEY, m); }
+  function saveSettings(s) { /* 已废弃：保留空实现兼容旧调用 */ }
+  function getMode() { return 'ai'; }
+  function setMode(m) { /* 已废弃：仅 AI 模式 */ }
+
+  // 旧版本可能在 localStorage 保存过 Key，加载时清除一次，避免误用失效 Key
+  try { localStorage.removeItem(SETTINGS_KEY); } catch (e) { /* 忽略 */ }
 
   /* ---------- 服务端配置探测 ---------- */
   var configCache = null;

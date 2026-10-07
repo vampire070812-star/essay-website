@@ -12,10 +12,9 @@
                    立意层次、辩证提纲、偏题风险。未配置 Key 或调用失败时
                    自动回退到本地“关键词粗提取”规则审题（结果中明确标注）。
 
-配置方式（二选一）：
-  A. 在本文件同目录放 .env 文件（参考 .env.example）；
-  B. 在网页右上角“AI 设置”里填写（保存在浏览器 localStorage 中，
-     每次请求经本机后端转发）。请求中显式传入的配置优先级高于 .env。
+配置方式：
+  仅支持在本文件同目录放 .env 文件（参考 .env.example）统一配置大模型；
+  客户端提交的 Key/接口/模型一律忽略，浏览器端不再提供设置入口。
 
 启动：  python server.py      然后浏览器打开 http://127.0.0.1:8000/
 """
@@ -1530,11 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def _resolve_cfg(self, data):
-        client_cfg = data.get("settings") or {}
-        api_key = str(client_cfg.get("apiKey") or "").strip() or SERVER_API_KEY
-        base_url = str(client_cfg.get("baseUrl") or "").strip() or SERVER_BASE_URL
-        model = str(client_cfg.get("model") or "").strip() or SERVER_MODEL
-        return api_key, base_url, model
+        # 统一使用服务端 .env 配置的大模型，忽略客户端提交的任何 Key/接口/模型
+        return SERVER_API_KEY, SERVER_BASE_URL, SERVER_MODEL
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -1856,19 +1852,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "draft": draft, "updatedAt": rec["updated_at"]})
 
     def _gate_server_key(self, data, kind):
-        """用【服务端 Key】调 AI 时校验登录与每日限额。
-        返回 (user, counted, blocked)：
-          counted=True 表示本次走的是服务端共享额度，成功后要 +1；
-          浏览器自带 Key（花自己的钱）一律放行、不计数。"""
-        client_key = str((data.get("settings") or {}).get("apiKey") or "").strip()
+        """所有 AI 调用都走服务端统一配置的 Key，校验登录与每日限额。
+        返回 (user, counted, blocked)：counted=True 表示成功后要 +1。"""
         user = self._current_user()
-        # 自带 Key 不限制；显式放开限制时不限制；服务器自己没配 Key 时无额度可保护
-        if client_key or ALLOW_ANON_SERVER_AI or not SERVER_API_KEY:
+        # 显式放开限制时不限制；服务器没配 Key 时无额度可保护
+        if ALLOW_ANON_SERVER_AI or not SERVER_API_KEY:
             return user, False, False
         if not user:
             self._api_error(
                 "login_required",
-                "使用网站共享的 AI 额度需要先登录账号；也可以在右上角“AI 设置”里填写自己的 API Key。",
+                "使用网站的 AI 批改需要先登录账号（每日有免费额度）。",
                 401)
             return None, False, True
         limit = GRADE_DAILY_LIMIT if kind == "grade" else ANALYZE_DAILY_LIMIT
@@ -1877,8 +1870,7 @@ class Handler(BaseHTTPRequestHandler):
         if limit and used >= limit:
             self._send_json({
                 "ok": False, "code": "quota_exceeded",
-                "message": "今日%s次数已达每日上限（%d 次）。配额按北京时间每日 0 点刷新；"
-                           "也可以在“AI 设置”中填写自己的 API Key 继续使用。" % (label, limit),
+                "message": "今日%s次数已达每日上限（%d 次）。配额按北京时间每日 0 点刷新，请明天再来。" % (label, limit),
                 "limit": limit, "used": used,
             }, 429)
             return None, False, True

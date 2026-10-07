@@ -272,18 +272,13 @@
 
   function refreshHint() {
     var hint = $('ai-hint');
-    var hasBrowserKey = !!(EssayAI.getSettings().apiKey);
-    if (hasBrowserKey) {
-      hint.innerHTML = '将使用浏览器中保存的 Key 调用 <b>' + escapeHtml(EssayAI.getSettings().model || 'AI 模型') +
-        '</b>，作文与题目经本机后端转发给大模型，按上海卷 70 分标准整体评判。';
-      hint.className = 'ai-hint ai-ok';
-    } else if (serverCfg && serverCfg.configured) {
+    if (serverCfg && serverCfg.configured) {
       var needLogin = serverCfg.auth && serverCfg.auth.loginRequired && !EssayAuth.user();
-      hint.innerHTML = '已检测到服务器 .env 配置，将使用 <b>' + escapeHtml(serverCfg.model) + '</b> 进行 AI 批改。' +
-        (needLogin ? '使用共享额度需先<span style="color:var(--primary);font-weight:700">登录账号</span>（每日有批改次数限制），也可在 AI 设置里填写自己的 Key。' : '');
+      hint.innerHTML = '将使用网站统一配置的 <b>' + escapeHtml(serverCfg.model) + '</b> 进行 AI 批改，按上海卷 70 分标准整体评判。' +
+        (needLogin ? '使用共享额度需先<span style="color:var(--primary);font-weight:700">登录账号</span>（每日有批改次数限制）。' : '');
       hint.className = 'ai-hint ai-ok';
     } else {
-      hint.innerHTML = '尚未配置 API Key —— 点击右上角 <b>⚙ AI 设置</b> 配置后即可使用大模型批改。';
+      hint.innerHTML = '网站尚未配置大模型服务，请稍后再试或联系管理员。';
       hint.className = 'ai-hint ai-warn';
     }
   }
@@ -303,7 +298,7 @@
     analyzeBtn.textContent = '审题中…';
     analyzeHint.textContent = '正在识题型、批注题眼、推演立意层次与提纲……';
     analyzeHint.className = 'analyze-hint';
-    EssayAI.analyze(p, EssayAI.getSettings()).then(function (data) {
+    EssayAI.analyze(p, null).then(function (data) {
       renderAnalyze(data.report, data.engine, data.model);
       analyzeHint.textContent = data.engine === 'local'
         ? '当前为本地规则粗提取结果（题型与关键词可信，深度分析建议配置 AI）。'
@@ -442,15 +437,14 @@
         prompt: promptEl.value.trim()
       }
     };
-    // 仅 AI 批改：未配置 Key 时提示去设置
-    var s = EssayAI.getSettings();
-    if (!s.apiKey && !(serverCfg && serverCfg.configured)) {
-      openSettings('AI 批改需要先配置 API Key。填写后即可使用大模型整体评判。');
+    // 仅 AI 批改：服务端未配置大模型时提示
+    if (!(serverCfg && serverCfg.configured)) {
+      tipEl.textContent = '网站尚未配置大模型服务，暂时无法批改，请稍后再试或联系管理员。';
+      tipEl.classList.add('show');
       return;
     }
-    // 用网站共享 Key：提前拦截未登录用户（服务端也会强制校验）
-    if (!s.apiKey && serverCfg && serverCfg.configured
-      && serverCfg.auth && serverCfg.auth.loginRequired && !EssayAuth.user()) {
+    // 用网站共享额度：提前拦截未登录用户（服务端也会强制校验）
+    if (serverCfg.auth && serverCfg.auth.loginRequired && !EssayAuth.user()) {
       openAuth('login', '使用网站共享的 AI 批改需要先登录账号。登录后还会自动云存批改历史与作文草稿。');
       return;
     }
@@ -461,9 +455,8 @@
     showStep(2);
     hideGradeError();
     resetCloudNote();
-    var settings = EssayAI.getSettings();
     startGrading(AI_STEPS, function (done) {
-      EssayAI.grade(lastSubmit.text, lastSubmit.opts, settings)
+      EssayAI.grade(lastSubmit.text, lastSubmit.opts, null)
         .then(function (data) {
           var report = EssayAI.adapt(data.report, lastSubmit.text, lastSubmit.opts);
           report.model = data.model;
@@ -838,7 +831,7 @@
     // 尚未审题：先跑审题，成功后连同批改报告一起生成
     var btn = this;
     btn.disabled = true;
-    EssayAI.analyze(promptEl.value.trim(), EssayAI.getSettings()).then(function (data) {
+    EssayAI.analyze(promptEl.value.trim(), null).then(function (data) {
       renderAnalyze(data.report, data.engine, data.model);
       printReport(true);
     }).catch(function (err) {
@@ -869,90 +862,7 @@
     printChoiceModal.hidden = false;
   });
 
-  /* ---------- AI 设置弹窗 ---------- */
-  var modal = $('settings-modal');
-  var providerSel = $('ai-provider');
-
-  function openSettings(msg) {
-    modal.hidden = false;
-    $('settings-msg').textContent = msg || '';
-    providerSel.innerHTML = '';
-    Object.keys(EssayAI.PROVIDERS).forEach(function (key) {
-      var opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = EssayAI.PROVIDERS[key].label;
-      providerSel.appendChild(opt);
-    });
-    var s = EssayAI.getSettings();
-    providerSel.value = s.provider || 'deepseek';
-    fillProvider(s);
-    EssayAI.fetchConfig().then(function (cfg) {
-      serverCfg = cfg;
-      var ss = $('server-status');
-      if (cfg.configured) {
-        ss.textContent = '✓ 服务器已通过 .env 配置：' + cfg.model + '（' + cfg.base_url + '）。浏览器中不填 Key 也能使用 AI 批改。';
-        ss.className = 'server-status ok';
-      } else {
-        ss.textContent = '✗ 服务器未在 .env 中配置 Key，请在下方填写（仅保存在本浏览器）。';
-        ss.className = 'server-status warn';
-      }
-      refreshHint();
-    });
-  }
-  var modalOpened = false;
-  function openSettingsOnce(msg) {
-    if (!modalOpened) {
-      openSettings(msg);
-    } else {
-      modal.hidden = false;
-      $('settings-msg').textContent = msg || '';
-    }
-    modalOpened = true;
-  }
-
-  function fillProvider(s) {
-    var p = EssayAI.PROVIDERS[providerSel.value];
-    $('ai-key').value = s.apiKey || '';
-    $('ai-base').value = s.baseUrl || p.base_url;
-    $('ai-model').value = s.model || p.model;
-  }
-
-  $('btn-settings').addEventListener('click', function () { openSettingsOnce(); });
-  $('modal-close').addEventListener('click', function () { modal.hidden = true; });
-  modal.addEventListener('click', function (e) { if (e.target === modal) modal.hidden = true; });
-  providerSel.addEventListener('change', function () {
-    var p = EssayAI.PROVIDERS[providerSel.value];
-    if (providerSel.value !== 'custom') {
-      $('ai-base').value = p.base_url;
-      $('ai-model').value = p.model;
-    }
-  });
-  $('btn-save-settings').addEventListener('click', function () {
-    var key = $('ai-key').value.trim();
-    var baseUrl = $('ai-base').value.trim();
-    var model = $('ai-model').value.trim();
-    if (!baseUrl || !model) {
-      $('settings-msg').textContent = '接口地址和模型名不能为空。';
-      return;
-    }
-    var prev = EssayAI.getSettings();
-    EssayAI.saveSettings({
-      provider: providerSel.value,
-      apiKey: key || prev.apiKey || '',
-      baseUrl: baseUrl, model: model
-    });
-    modal.hidden = true;
-    refreshModeUI();
-    refreshHint();
-  });
-  $('btn-clear-key').addEventListener('click', function () {
-    var s = EssayAI.getSettings();
-    s.apiKey = '';
-    EssayAI.saveSettings(s);
-    $('ai-key').value = '';
-    $('settings-msg').textContent = '已清除本浏览器保存的 Key。';
-    refreshHint();
-  });
+  /* ---------- AI 设置已由网站统一配置（服务端 .env），不再提供浏览器端入口 ---------- */
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
