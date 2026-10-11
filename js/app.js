@@ -375,6 +375,9 @@
       updateCount();
       var n = EssayEngine.gridLen(bodyText);
       var msg = '✓ 识别成功，共 ' + n + ' 字（含标点占格，与输入框计数一致）。' + splitMsg;
+      if (res.dropped) {
+        msg += '。已自动剔除识别模型添加的 ' + res.dropped + ' 处无关说明（未计入正文）';
+      }
       if (res.kind === 'image') {
         msg += '。图片 OCR 可能有少量错字，请对照原文核对修改后再批改';
       }

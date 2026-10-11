@@ -466,7 +466,7 @@
           err.status = r.status;
           throw err;
         }
-        return String(j.text || '');
+        return { text: String(j.text || ''), dropped: +(j.droppedMeta || 0) };
       });
     }, function (e) {
       clearTimeout(timer);
@@ -736,10 +736,11 @@
             });
           });
           return Promise.all(jobs).then(function (outs) {
-            var firstErr = null;
+            var firstErr = null, droppedSrv = 0;
             var parts = outs.map(function (o) {
               if (o && o.__err) { if (!firstErr) firstErr = o.__err; return ''; }
-              return o;
+              droppedSrv += +(o && o.dropped || 0);
+              return o && o.text || '';
             });
             if (firstErr) throw firstErr;
             var cleaned = sanitizeOcrText(joinStripTexts(parts));
@@ -749,12 +750,15 @@
               e2.handled = true;
               throw e2;
             }
-            return merged;
+            return { text: merged, dropped: droppedSrv + cleaned.dropped };
           });
         });
-      }).then(function (text) {
+      }).then(function (visionResult) {
         report({ status: '识别完成，请在正文框中核对', ratio: 1 });
-        return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true, engine: 'vision' };
+        return {
+          text: visionResult.text, kind: 'image', titleGuess: guessTitle(visionResult.text),
+          ocr: true, engine: 'vision', dropped: visionResult.dropped || 0
+        };
       }, function (e) {
         if (e && (e.code === 'login_required' || e.status === 401)) {
           throw new Error('拍照识别需要先登录：请点右上角「登录」后再上传照片。');
@@ -1129,12 +1133,12 @@
     }
     if (list.length > 6) return Promise.reject(new Error('一次最多上传 6 张照片。'));
 
-    var texts = [];
+    var texts = [], dropped = 0;
     var idx = 0;
     function step() {
       if (idx >= list.length) {
         var text = normalizeText(texts.join('\n\n'));
-        return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true };
+        return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true, dropped: dropped };
       }
       var cur = idx;
       var sub = function (p) {
@@ -1145,6 +1149,7 @@
       };
       return parseImage(list[idx], sub).then(function (res) {
         texts.push(res.text);
+        dropped += +(res.dropped || 0);
         idx++;
         return step();
       });
