@@ -96,6 +96,25 @@ SERVER_MODEL = (
     or PROVIDERS["deepseek"]["model"]
 )
 
+# 视觉模型（手写作文照片 OCR 转写）服务端配置；未配 OCR_API_KEY 时 /api/ocr 返回 ocr_disabled，
+# 前端自动回退到浏览器端 tesseract 识别
+OCR_API_KEY = os.environ.get("OCR_API_KEY", "").strip()
+OCR_BASE_URL = (
+    os.environ.get("OCR_BASE_URL", "").strip()
+    or "https://open.bigmodel.cn/api/paas/v4"
+)
+OCR_MODEL = os.environ.get("OCR_MODEL", "").strip() or "glm-4v-flash"
+OCR_TIMEOUT = 120               # 视觉模型超时（秒）
+OCR_MAX_BODY = 8 * 1024 * 1024  # /api/ocr 请求体上限（base64 图片）
+
+OCR_SYSTEM_PROMPT = (
+    "你是中文手写作文的文字转写员。请把图片中的手写作文逐字转写为文本："
+    "1) 严格按原文转写，不改正错别字、不润色、不增删内容、不点评；"
+    "2) 保留原文的段落结构，段落之间用一个空行分隔；"
+    "3) 实在无法辨认的字用「□」代替，不要猜测生造；"
+    "4) 只输出转写文本本身，不要输出任何解释、前缀或 markdown 标记。"
+)
+
 
 # ============================================================
 #  账号体系：SQLite + PBKDF2 密码哈希 + 随机 Token 会话（全部仅用标准库）
@@ -1367,6 +1386,59 @@ def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens):
     raise LLMError("unavailable", last_err or "大模型服务暂不可用")
 
 
+def call_vision_llm(api_key, base_url, model, system_prompt, data_url, max_tokens=4096):
+    """调用 OpenAI 兼容视觉模型转写图片文字。返回纯文本；失败抛 LLMError。"""
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": "请转写这张作文照片里的全部文字。"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]},
+        ],
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def once():
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        req.add_header("Authorization", "Bearer " + api_key)
+        with urllib.request.urlopen(req, timeout=OCR_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    last_err = None
+    for attempt in range(2):  # 网络错误 / 5xx / 429 时重试一次
+        try:
+            raw = once()
+            text = raw["choices"][0]["message"]["content"] or ""
+            # 剥离可能的 markdown 围栏与首尾空白
+            text = text.strip()
+            if text.startswith("```"):
+                parts = text.split("```")
+                text = parts[1] if len(parts) > 1 else text
+                text = text.strip()
+            if not text:
+                raise LLMError("empty_result", "视觉模型未返回任何文字")
+            return text
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "ignore")[:300]
+            if e.code in (400, 401, 403, 404):
+                raise LLMError("auth_or_param",
+                               "识别接口返回 %s：%s。请检查 OCR_API_KEY、接口地址和模型名。" % (e.code, detail))
+            last_err = "识别接口限流（429），请稍后再试" if e.code == 429 \
+                else "识别接口返回 %s：%s" % (e.code, detail)
+        except urllib.error.URLError as e:
+            last_err = "无法连接识别服务：%s" % getattr(e, "reason", e)
+        except (KeyError, IndexError, ValueError) as e:
+            raise LLMError("bad_response", "识别服务返回内容无法解析：%s" % e)
+        time.sleep(1.2)
+    raise LLMError("unavailable", last_err or "识别服务暂不可用")
+
+
 def parse_json_object(content):
     """剥离代码块并解析 JSON 对象。"""
     s = content.strip()
@@ -1508,6 +1580,7 @@ class Handler(BaseHTTPRequestHandler):
                     "analyzeLimit": ANALYZE_DAILY_LIMIT,
                     "smsEnabled": ALIYUN_SMS_ENABLED or SMS_DEBUG,
                 },
+                "ocr": {"enabled": bool(OCR_API_KEY)},
             })
             return
         if path == "/api/auth/me":
@@ -1568,6 +1641,11 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_body(120 * 1024)
             if data is not None:
                 self.handle_draft_save(data)
+            return
+        if path == "/api/ocr":
+            data = self._read_body(OCR_MAX_BODY)
+            if data is not None:
+                self.handle_ocr(data)
             return
         if path not in ("/api/grade", "/api/analyze"):
             self.send_error(404, "Not Found")
@@ -1892,7 +1970,7 @@ class Handler(BaseHTTPRequestHandler):
                 401)
             return None, False, True
         limit = GRADE_DAILY_LIMIT if kind == "grade" else ANALYZE_DAILY_LIMIT
-        label = "批改" if kind == "grade" else "AI 审题"
+        label = {"grade": "批改", "analyze": "AI 审题", "ocr": "图片识别"}.get(kind, kind)
         used = db_usage_get(user["id"], today_cn())[0 if kind == "grade" else 1]
         if limit and used >= limit:
             self._send_json({
@@ -1902,6 +1980,37 @@ class Handler(BaseHTTPRequestHandler):
             }, 429)
             return None, False, True
         return user, True, False
+
+    def handle_ocr(self, data):
+        """手写作文照片转写：转发给 OpenAI 兼容视觉模型（如 glm-4v-flash）。
+        未配置 OCR_API_KEY 时返回 503 ocr_disabled，前端回退到浏览器端识别。"""
+        if not OCR_API_KEY:
+            self._send_json({"ok": False, "code": "ocr_disabled",
+                             "message": "服务端未配置图片识别模型"}, 503)
+            return
+        image = str(data.get("image") or "")
+        if not image.startswith("data:image/") or len(image) < 256:
+            self._send_json({"ok": False, "code": "bad_image",
+                             "message": "图片数据缺失或格式不正确"}, 400)
+            return
+        user, counted, blocked = self._gate_server_key(data, "ocr")
+        if blocked:
+            return
+
+        t0 = time.time()
+        try:
+            # glm-4v-flash 的 max_tokens 上限为 1024（单页手写作文约 300-400 字，足够）
+            text = call_vision_llm(OCR_API_KEY, OCR_BASE_URL, OCR_MODEL,
+                                   OCR_SYSTEM_PROMPT, image, max_tokens=1024)
+        except LLMError as e:
+            status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
+            self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
+            return
+        if counted and user:
+            db_usage_bump(user["id"], today_cn(), "analyzes")
+        self._send_json({"ok": True, "text": text,
+                         "engine": "vision", "model": OCR_MODEL,
+                         "elapsed": round(time.time() - t0, 1)})
 
     def handle_grade(self, data, api_key, base_url, model):
         text = (data.get("text") or "").strip()

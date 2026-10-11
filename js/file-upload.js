@@ -285,13 +285,16 @@
     });
   }
 
-  // OCR 任务句柄（供取消时 terminate）
+  // OCR 任务句柄（供取消时 terminate）；tesseract worker 跨页复用，避免每张重复建
   var activeWorker = null;
+  var tessWorker = null, tessWorkerPromise = null;
   function cancelOcr() {
     if (activeWorker) {
       try { activeWorker.terminate(); } catch (e) {}
       activeWorker = null;
     }
+    tessWorker = null;
+    tessWorkerPromise = null;
   }
 
   // OCR 各阶段 → 进度映射，让用户看到真实进展而不是卡死
@@ -316,12 +319,129 @@
     }
   }
 
-  /* ---------- 图片 OCR：tesseract.js（中文简体，多源 + 看门狗） ---------- */
-  function parseImage(file, report) {
-    var lastBeat = Date.now();
-    var watchTimer = null;
+  /* ---------- 图片预处理：EXIF 旋转修正 + 缩放（两条识别通道共用） ---------- */
+  function loadViaImg(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        resolve({
+          src: img, w: img.naturalWidth, h: img.naturalHeight,
+          close: function () { URL.revokeObjectURL(url); }
+        });
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error('图片无法解码，请换一张试试（支持 jpg/png/webp）。'));
+      };
+      img.src = url;
+    });
+  }
 
-    return loadScript(LIBS.tesseract, 'Tesseract').then(function () {
+  // 优先 createImageBitmap（按 EXIF 方向自动转正，iOS≥16/安卓均支持），失败降级 <img>
+  function loadDrawable(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).then(function (bmp) {
+        return {
+          src: bmp, w: bmp.width, h: bmp.height,
+          close: function () { try { bmp.close(); } catch (e) {} }
+        };
+      }, function () { return loadViaImg(file); });
+    }
+    return loadViaImg(file);
+  }
+
+  // opts.longEdge：长边压缩上限；opts.enhance：灰度化 + 对比度拉伸（提升本地 OCR 适应性）
+  function preprocessImage(file, opts) {
+    var longEdge = (opts && opts.longEdge) || 1800;
+    var enhance = !!(opts && opts.enhance);
+    return loadDrawable(file).then(function (d) {
+      if (!d.w || !d.h) { d.close(); throw new Error('图片无法解码，请换一张试试。'); }
+      var scale = Math.min(1, longEdge / Math.max(d.w, d.h));
+      var w = Math.max(1, Math.round(d.w * scale));
+      var h = Math.max(1, Math.round(d.h * scale));
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; // 透明底填白，避免黑底
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(d.src, 0, 0, w, h);
+      d.close();
+      if (enhance) {
+        var im = ctx.getImageData(0, 0, w, h);
+        var px = im.data, n = px.length;
+        var gray = new Uint8Array(n / 4);
+        for (var i = 0, j = 0; i < n; i += 4, j++) {
+          gray[j] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        }
+        // 按 0.5% / 99.5% 分位做对比度拉伸，抵消光照不均与纸张发灰。
+        // 注意：稀疏文字图的暗像素占比极低（细笔画+抗锯齿可能不到 1%），
+        // 分位过大或 lo/hi 退化时必须跳过拉伸，否则会把整图压成全黑。
+        var hist = new Uint32Array(256);
+        for (var k = 0; k < gray.length; k++) hist[gray[k]]++;
+        var cut = Math.max(8, Math.floor(gray.length * 0.005)), acc = 0, lo = 0, hi = 255;
+        for (var a = 0; a < 256; a++) { acc += hist[a]; if (acc >= cut) { lo = a; break; } }
+        acc = 0;
+        for (var b = 255; b >= 0; b--) { acc += hist[b]; if (acc >= cut) { hi = b; break; } }
+        var doStretch = hi - lo >= 40;
+        var range = doStretch ? hi - lo : 1;
+        for (var i2 = 0, j2 = 0; i2 < n; i2 += 4, j2++) {
+          var g = doStretch ? Math.round((gray[j2] - lo) * 255 / range) : gray[j2];
+          if (g < 0) g = 0; else if (g > 255) g = 255;
+          px[i2] = px[i2 + 1] = px[i2 + 2] = g;
+        }
+        ctx.putImageData(im, 0, 0);
+      }
+      return new Promise(function (resolve, reject) {
+        canvas.toBlob(function (blob) {
+          if (!blob) { reject(new Error('图片处理失败，请换一张试试。')); return; }
+          resolve({ blob: blob, dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: w, height: h });
+        }, 'image/jpeg', 0.85);
+      });
+    });
+  }
+
+  /* ---------- 服务端配置（懒加载，判断视觉识别通道是否可用） ---------- */
+  var serverCfgPromise = null;
+  function getServerCfg() {
+    if (!serverCfgPromise) {
+      serverCfgPromise = fetch('/api/config', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .catch(function () { return {}; });
+    }
+    return serverCfgPromise;
+  }
+
+  // 服务端视觉模型识别手写文字：成功返回文本；任何失败由调用方回退本地识别
+  function serverOcr(dataUrl, report) {
+    var ctrl = null;
+    try { ctrl = new AbortController(); } catch (e) {}
+    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e) {} }, 90000);
+    report({ status: '正在识别手写文字…', ratio: 0.3 });
+    return fetch('/api/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ image: dataUrl }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        clearTimeout(timer);
+        if (!j || !j.ok) {
+          var err = new Error((j && j.message) || '服务端识别失败');
+          err.code = j && j.code;
+          throw err;
+        }
+        return String(j.text || '');
+      });
+    }, function (e) { clearTimeout(timer); throw e; });
+  }
+
+  /* ---------- 本地 tesseract 通道（worker 复用 + 增强预处理） ---------- */
+  function getTessWorker(report) {
+    if (tessWorkerPromise) return tessWorkerPromise;
+    var lastBeat = Date.now();
+    var createPromise = loadScript(LIBS.tesseract, 'Tesseract').then(function () {
       report({ status: '正在检测最快的识别模型下载线路…', ratio: 0.03 });
       return Promise.all([
         pickFastest(TESS_WORKERS, ''),
@@ -338,38 +458,74 @@
         status: '正在下载中文识别模型（' + (isLite ? '约 1.7MB 轻量版' : '约 20MB 标准版') + '，仅首次，之后自动缓存）',
         ratio: 0.05
       });
-
-      var createPromise = window.Tesseract.createWorker('chi_sim', 1, {
+      return window.Tesseract.createWorker('chi_sim', 1, {
         workerPath: workerPath,
         corePath: corePath,
         langPath: langPath,
         gzip: true,
         logger: function (m) { lastBeat = Date.now(); ocrProgress(m, report); }
-      }).then(function (worker) { activeWorker = worker; return worker; });
-
-      // 看门狗：90 秒没有任何阶段进展即判定网络卡死
-      var guard = new Promise(function (_, reject) {
-        watchTimer = setInterval(function () {
-          if (Date.now() - lastBeat > 90000) {
-            clearInterval(watchTimer);
-            reject(new Error('识别模型下载长时间没有进展（当前网络过慢或受限）。建议：① 切换 WiFi/4G 后点重试；② 轻量模型仍失败时改用 Word/PDF 或直接粘贴文字。'));
-          }
-        }, 5000);
-        createPromise.then(function () { clearInterval(watchTimer); }, function () { clearInterval(watchTimer); });
       });
-
-      return Promise.race([createPromise, guard]);
     }).then(function (worker) {
-      return worker.recognize(file).then(function (ret) {
-        return worker.terminate().then(function () { activeWorker = null; return ret; });
-      }, function (err) {
-        return worker.terminate().then(function () { activeWorker = null; throw err; });
+      return worker.setParameters({
+        tessedit_pageseg_mode: '6',   // 单块均匀文本，适合作文整页照片
+        preserve_interword_spaces: '1'
+      }).then(function () {
+        tessWorker = worker;
+        activeWorker = worker;
+        return worker;
       });
+    });
+
+    // 看门狗：90 秒没有任何阶段进展即判定网络卡死
+    var guard = new Promise(function (_, reject) {
+      var watchTimer = setInterval(function () {
+        if (Date.now() - lastBeat > 90000) {
+          clearInterval(watchTimer);
+          reject(new Error('识别模型下载长时间没有进展（当前网络过慢或受限）。建议：① 切换 WiFi/4G 后点重试；② 轻量模型仍失败时改用 Word/PDF 或直接粘贴文字。'));
+        }
+      }, 5000);
+      createPromise.then(function () { clearInterval(watchTimer); }, function () { clearInterval(watchTimer); });
+    });
+
+    tessWorkerPromise = Promise.race([createPromise, guard]);
+    tessWorkerPromise.catch(function () { tessWorkerPromise = null; });
+    return tessWorkerPromise;
+  }
+
+  // 本地通道：灰度对比度增强 + PSM 6 整页识别
+  function tessParseImage(file, report) {
+    var prep = null;
+    return preprocessImage(file, { longEdge: 2400, enhance: true }).then(function (p) {
+      prep = p;
+      return getTessWorker(report);
+    }).then(function (worker) {
+      return worker.recognize(prep.blob);
     }).then(function (ret) {
       var text = ocrPostProcess(ret.data && ret.data.text ? ret.data.text : '');
       if (!text) throw new Error('图片中未识别到文字，请换更清晰的图片（光线充足、纸面平整、文字占画面大一些）。');
       report({ status: '识别完成，请在正文框中核对错别字', ratio: 1 });
       return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true };
+    });
+  }
+
+  /* ---------- 图片识别主流程：服务端视觉模型优先，失败回退本地识别 ---------- */
+  function parseImage(file, report) {
+    return getServerCfg().then(function (cfg) {
+      if (!cfg || !cfg.ocr || !cfg.ocr.enabled) return null;
+      report({ status: '正在压缩照片…', ratio: 0.08 });
+      return preprocessImage(file, { longEdge: 1800 }).then(function (prep) {
+        return serverOcr(prep.dataUrl, report);
+      }).then(function (text) {
+        text = normalizeText(text);
+        if (!text) throw new Error('empty');
+        return text;
+      }).then(function (text) { return text; }, function () { return null; });
+    }).then(function (visionText) {
+      if (visionText) {
+        report({ status: '识别完成，请在正文框中核对错别字', ratio: 1 });
+        return { text: visionText, kind: 'image', titleGuess: guessTitle(visionText), ocr: true };
+      }
+      return tessParseImage(file, report);
     });
   }
 
@@ -716,8 +872,49 @@
     return Promise.reject(new Error('暂不支持 .' + ext + ' 格式。支持：Word(.docx)、PDF、TXT、图片（自动 OCR）。'));
   }
 
+  /* ---------- 多图入口：作文多页照片按顺序识别并拼接 ----------
+   * extractMany(FileList|File[], onProgress) -> Promise<{text, kind, titleGuess, ocr}>
+   * 仅接受全部为图片；单文件请直接用 extract。逐张识别（本地通道共享同一 worker）。
+   */
+  function extractMany(files, onProgress) {
+    var report = onProgress || function () {};
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return Promise.reject(new Error('未选择文件。'));
+    if (list.length === 1) return extract(list[0], report);
+    var allImg = list.every(function (f) {
+      return ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'].indexOf(getExt(f.name)) >= 0;
+    });
+    if (!allImg) {
+      return Promise.reject(new Error('一次选择多个文件时仅支持图片（作文多页照片）；Word/PDF/TXT 请单独上传。'));
+    }
+    if (list.length > 6) return Promise.reject(new Error('一次最多上传 6 张照片。'));
+
+    var texts = [];
+    var idx = 0;
+    function step() {
+      if (idx >= list.length) {
+        var text = normalizeText(texts.join('\n\n'));
+        return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true };
+      }
+      var cur = idx;
+      var sub = function (p) {
+        report({
+          status: '第 ' + (cur + 1) + ' / ' + list.length + ' 张：' + (p.status || ''),
+          ratio: (cur + (p.ratio || 0)) / list.length
+        });
+      };
+      return parseImage(list[idx], sub).then(function (res) {
+        texts.push(res.text);
+        idx++;
+        return step();
+      });
+    }
+    return step();
+  }
+
   window.EssayFile = {
     extract: extract,
+    extractMany: extractMany,
     splitDocument: splitDocument,
     cancelOcr: cancelOcr,
     supported: '.txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp',

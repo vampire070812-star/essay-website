@@ -1,10 +1,10 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split33" />
+<link rel="stylesheet" href="styles.css?v=split34" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -102,10 +102,10 @@
           <div class="uz-icon">📄</div>
           <div class="uz-main">
             <b id="upload-title">点击上传作文文件，或将文件拖到这里</b>
-            <span id="upload-sub">支持 Word（.docx）、PDF、TXT、作文照片（自动 OCR）· 文件含题目时会自动拆到上方，标题保留在正文首行 · 照片识别首次需下载约 2MB 中文模型</span>
+            <span id="upload-sub">支持 Word（.docx）、PDF、TXT、作文照片（手写拍照自动识别，可一次选多张按页拼接）· 文件含题目时会自动拆到上方，标题保留在正文首行</span>
           </div>
           <span class="uz-btn" id="upload-btn">选择文件</span>
-          <input type="file" id="essay-file" hidden
+          <input type="file" id="essay-file" hidden multiple
             accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp" />
         </div>
         <div class="upload-progress" id="upload-progress" hidden>
@@ -399,11 +399,11 @@
 <!-- 轻提示 -->
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
-<script src="js/file-upload.js?v=split33"></script>
-<script src="js/engine.js?v=split33"></script>
-<script src="js/ai-client.js?v=split33"></script>
-<script src="js/auth.js?v=split33"></script>
-<script src="js/app.js?v=split33"></script>
+<script src="js/file-upload.js?v=split34"></script>
+<script src="js/engine.js?v=split34"></script>
+<script src="js/ai-client.js?v=split34"></script>
+<script src="js/auth.js?v=split34"></script>
+<script src="js/app.js?v=split34"></script>
 </body>
 </html>
 

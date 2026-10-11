@@ -24,3 +24,10 @@ services:
       # 试运行账号清单，格式：user001:密码,user002:密码,...（每次启动自动播种，防止免费实例磁盘重置丢账号）
       - key: TRIAL_ACCOUNTS
         sync: false
+      # 手写作文照片识别（视觉模型，推荐智谱 glm-4v-flash 免费）；不配则前端自动回退浏览器本地识别
+      - key: OCR_API_KEY
+        sync: false
+      - key: OCR_BASE_URL
+        sync: false
+      - key: OCR_MODEL
+        sync: false

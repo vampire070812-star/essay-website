@@ -151,11 +151,11 @@
     });
   });
   upZone.addEventListener('drop', function (e) {
-    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleFile(f);
+    var fs = e.dataTransfer && e.dataTransfer.files;
+    if (fs && fs.length) handleFiles(fs);
   });
   upInput.addEventListener('change', function () {
-    if (upInput.files && upInput.files[0]) handleFile(upInput.files[0]);
+    if (upInput.files && upInput.files.length) handleFiles(upInput.files);
     upInput.value = ''; // 允许重复选择同一个文件
   });
   upCancel.addEventListener('click', function () { resetUploadUI(); });
@@ -176,22 +176,25 @@
     upBar.style.width = Math.round((ratio || 0) * 100) + '%';
   }
 
-  function handleFile(file) {
+  function handleFiles(files) {
     if (!window.EssayFile) {
       tipEl.textContent = '文件识别组件未加载（file-upload.js 缺失），请刷新页面。';
       tipEl.classList.add('show');
       return;
     }
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var dispName = list.length === 1 ? list[0].name : list.length + ' 张照片（按页序识别）';
     var seq = ++uploadSeq;
     upZone.classList.add('busy');
     upBox.hidden = false;
     upBox.classList.remove('ok', 'error');
     upStatus.className = 'up-status';
-    setUploadProgress(file.name, '准备识别……', 0.05);
+    setUploadProgress(dispName, '准备识别……', 0.05);
 
-    EssayFile.extract(file, function (p) {
+    EssayFile.extractMany(list, function (p) {
       if (seq !== uploadSeq) return;
-      setUploadProgress(file.name, p.status || '识别中……', p.ratio || 0);
+      setUploadProgress(dispName, p.status || '识别中……', p.ratio || 0);
     }).then(function (res) {
       if (seq !== uploadSeq) return; // 已被取消
 
