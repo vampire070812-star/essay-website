@@ -1,10 +1,10 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split35" />
+<link rel="stylesheet" href="styles.css?v=split36" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -124,6 +124,18 @@
           <span class="sample-hint">没有作文？试试 →
             <button type="button" class="link-btn" id="load-sample-1">60 分范文</button>
           </span>
+        </div>
+
+        <!-- 识别校对：疑似识别错字标红，点击一键替换 -->
+        <div class="proof-card" id="proof-card" hidden>
+          <div class="pc-head">
+            <b>🔍 识别校对</b>
+            <span class="pc-count" id="pc-count"></span>
+            <button type="button" class="pc-close" id="pc-close" title="关闭校对">×</button>
+          </div>
+          <p class="pc-tip">下面<b class="pc-hl">标红的字词</b>疑似识别错误，点「改为」即可替换进正文；不确定可忽略，也可直接在正文框修改。</p>
+          <p class="pc-loading" id="pc-loading">正在校对识别文字…</p>
+          <div class="pc-rows" id="pc-rows"></div>
         </div>
       </div>
 
@@ -399,11 +411,11 @@
 <!-- 轻提示 -->
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
-<script src="js/file-upload.js?v=split35"></script>
-<script src="js/engine.js?v=split35"></script>
-<script src="js/ai-client.js?v=split35"></script>
-<script src="js/auth.js?v=split35"></script>
-<script src="js/app.js?v=split35"></script>
+<script src="js/file-upload.js?v=split36"></script>
+<script src="js/engine.js?v=split36"></script>
+<script src="js/ai-client.js?v=split36"></script>
+<script src="js/auth.js?v=split36"></script>
+<script src="js/app.js?v=split36"></script>
 </body>
 </html>
 

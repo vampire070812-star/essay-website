@@ -113,10 +113,11 @@
     analyzeHint.className = 'analyze-hint';
     updateCount();
   }
-  $('load-sample-1').addEventListener('click', function () { loadSample(SAMPLE_1); });
+  $('load-sample-1').addEventListener('click', function () { loadSample(SAMPLE_1); resetProof(); });
   $('btn-clear').addEventListener('click', function () {
     textEl.value = '';
     titleEl.value = '';
+    resetProof();
     updateCount();
     textEl.focus();
   });
@@ -130,6 +131,158 @@
     upStatus = $('up-status'),
     upCancel = $('up-cancel');
   var uploadSeq = 0; // 用于取消后丢弃迟到的解析结果
+
+  /* ---------- 识别校对（疑似 OCR 错字标红 + 一键替换） ---------- */
+  var proofCard = $('proof-card'),
+    pcLoading = $('pc-loading'),
+    pcRows = $('pc-rows'),
+    pcCount = $('pc-count'),
+    pcClose = $('pc-close');
+  var proofSeq = 0, proofItems = [], proofDone = {};
+
+  function resetProof() {
+    proofSeq++;
+    proofItems = [];
+    proofDone = {};
+    proofCard.hidden = true;
+    pcRows.innerHTML = '';
+    pcLoading.hidden = false;
+    pcLoading.textContent = '正在校对识别文字…';
+  }
+
+  function spliceOne(s, find, repl) {
+    var i = s.indexOf(find);
+    return i < 0 ? s : s.slice(0, i) + repl + s.slice(i + find.length);
+  }
+
+  // 在正文框当前内容中定位 quote 并把其中 original 替换为 suggest
+  function applyProof(item, undo) {
+    var val = textEl.value;
+    var findQ, findW, replW;
+    if (!undo) {
+      findQ = item.quote; findW = item.original; replW = item.suggest;
+    } else {
+      findQ = spliceOne(item.quote, item.original, item.suggest); // 替换后的新片段
+      findW = item.suggest; replW = item.original;
+    }
+    var qi = val.indexOf(findQ);
+    if (qi < 0) return false;
+    var wi = findQ.indexOf(findW);
+    if (wi < 0) return false;
+    var start = qi + wi;
+    textEl.value = val.slice(0, start) + replW + val.slice(start + findW.length);
+    updateCount();
+    return true;
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function renderProofRows() {
+    pcLoading.hidden = true;
+    pcRows.innerHTML = '';
+    var remain = 0;
+    proofItems.forEach(function (it, idx) {
+      var row = el('div', 'pc-row' + (proofDone[idx] === 'stale' ? ' stale' : ''));
+      if (proofDone[idx] === 'done') {
+        row.appendChild(el('span', 'pc-done-text', '已将「' + it.original + '」改为「' + it.suggest + '」'));
+        var undoBtn = el('button', 'pc-undo', '撤销');
+        undoBtn.type = 'button';
+        undoBtn.dataset.action = 'undo';
+        undoBtn.dataset.idx = idx;
+        row.appendChild(undoBtn);
+      } else {
+        if (proofDone[idx] !== 'stale') remain++;
+        var oi = it.quote.indexOf(it.original);
+        var quoteBtn = el('button', 'pc-quote');
+        quoteBtn.type = 'button';
+        if (proofDone[idx] === 'stale') quoteBtn.disabled = true;
+        var before = oi >= 0 ? it.quote.slice(0, oi) : it.quote;
+        var after = oi >= 0 ? it.quote.slice(oi + it.original.length) : '';
+        if (before) quoteBtn.appendChild(el('span', 'pc-q-side', before));
+        quoteBtn.appendChild(el('mark', '', it.original));
+        if (after) quoteBtn.appendChild(el('span', 'pc-q-side', after));
+        quoteBtn.dataset.action = 'accept';
+        quoteBtn.dataset.idx = idx;
+        row.appendChild(quoteBtn);
+        var fixBtn = el('button', 'pc-fix-btn', '改为「' + it.suggest + '」');
+        fixBtn.type = 'button';
+        if (proofDone[idx] === 'stale') { fixBtn.disabled = true; fixBtn.textContent = '该处已被修改'; }
+        fixBtn.dataset.action = 'accept';
+        fixBtn.dataset.idx = idx;
+        row.appendChild(fixBtn);
+      }
+      pcRows.appendChild(row);
+    });
+    pcCount.textContent = remain
+      ? '发现 ' + remain + ' 处疑似识别错字'
+      : (proofItems.length ? '已全部处理' : '');
+  }
+
+  pcRows.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    var idx = +btn.dataset.idx, item = proofItems[idx];
+    if (!item) return;
+    if (btn.dataset.action === 'accept') {
+      if (applyProof(item, false)) {
+        proofDone[idx] = 'done';
+        renderProofRows();
+        toast('已将「' + item.original + '」改为「' + item.suggest + '」', 'ok');
+      } else {
+        proofDone[idx] = 'stale';
+        renderProofRows();
+        toast('该处正文已被修改，无法自动替换，请手动核对');
+      }
+    } else if (btn.dataset.action === 'undo') {
+      if (applyProof(item, true)) {
+        delete proofDone[idx];
+        renderProofRows();
+        toast('已撤销替换', 'ok');
+      } else {
+        toast('正文后续又被修改，无法自动撤销，请手动改回');
+      }
+    }
+  });
+
+  pcClose.addEventListener('click', resetProof);
+
+  function runProofread(text) {
+    resetProof();
+    if (!(serverCfg && serverCfg.proofread && serverCfg.proofread.enabled)) return;
+    if (!text || text.trim().length < 30) return;
+    var seq = proofSeq;
+    proofCard.hidden = false;
+    var ctrl = null;
+    try { ctrl = new AbortController(); } catch (e2) {}
+    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e3) {} }, 25000);
+    fetch('/api/proofread', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ text: text.slice(0, 6000) }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, j: j }; }, function () { return null; });
+    }, function () { return null; }).then(function (res) {
+      clearTimeout(timer);
+      if (seq !== proofSeq) return; // 已被新的识别/清空取代
+      if (!res || !res.ok || !res.j || !res.j.ok || !Array.isArray(res.j.items) || !res.j.items.length) {
+        proofCard.hidden = true; // 未登录/失败/无错字：静默收起，不打扰
+        return;
+      }
+      proofItems = res.j.items;
+      proofDone = {};
+      renderProofRows();
+    }).catch(function () {
+      clearTimeout(timer);
+      if (seq === proofSeq) proofCard.hidden = true;
+    });
+  }
 
   function pickFile() {
     if (!upZone.classList.contains('busy')) upInput.click();
@@ -234,8 +387,10 @@
       tipEl.textContent = '';
       tipEl.classList.remove('show');
       textEl.focus();
+      runProofread(bodyText);
     }).catch(function (err) {
       if (seq !== uploadSeq) return;
+      resetProof();
       upStatus.textContent = '✗ ' + (err && err.message ? err.message : '识别失败，请重试或直接粘贴文字。');
       upStatus.className = 'up-status error';
       upBox.classList.add('error');

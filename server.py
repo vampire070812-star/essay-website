@@ -114,7 +114,32 @@ OCR_SYSTEM_PROMPT = (
     "稿纸的格线、红框、页码、眉批等标记不是文字，一律忽略；"
     "3) 保留原文的段落结构，段落之间用一个空行分隔；"
     "4) 实在无法辨认的字用「□」代替，不要猜测生造；"
-    "5) 只输出转写文本本身，不要输出任何解释、前缀或 markdown 标记。"
+    "5) 只输出转写文本本身。严禁输出任何与作文正文无关的内容，包括但不限于："
+    "开场白（如“好的，以下是转写内容”）、结束语、对图片或字迹质量的评价、"
+    "无法辨认的说明、请求提供更清晰图片、道歉或寒暄。即使整页都看不清，"
+    "也只输出能辨认出的文字或□，绝不作任何解释。"
+)
+
+# 识别后错字校对（OCR proofread）：默认复用智谱 Key 调用免费的 glm-4-flash 文本模型
+PROOFREAD_API_KEY = os.environ.get("PROOFREAD_API_KEY", "").strip() or OCR_API_KEY
+PROOFREAD_BASE_URL = os.environ.get("PROOFREAD_BASE_URL", "").strip() or OCR_BASE_URL
+PROOFREAD_MODEL = os.environ.get("PROOFREAD_MODEL", "").strip() or "glm-4-flash"
+PROOFREAD_MAX_TEXT = 6000
+
+PROOFREAD_SYSTEM_PROMPT = (
+    "你是中文手写作文的 OCR 校对员。用户会给你一段手写作文照片的机器转写文本，"
+    "其中可能有少量因手写字形相近、拍照模糊造成的识别错字。"
+    "任务：只找出“明显是识别错误”的字词——原词在中文里不成词、或在此语境语义不通，"
+    "而替换成一个形近或音近的常见词后句意立刻通顺（例如：软伴→软件、限多→限制、"
+    "内客→内容、机戒→机械、出板→出版）。\n"
+    "严格要求：\n"
+    "1. 宁缺毋滥：但凡原句通顺、可能是作者本意的，一律不报；不要挑作者自己写的错别字、"
+    "语病、标点问题、用词好坏，不要做任何润色建议；\n"
+    "2. 不报告人名、地名、专有名词、文言表达和创意化用词；\n"
+    "3. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
+    "且要保证 quote 在全文中只出现一次；original 是其中的错词，suggest 是最可能的正确词；\n"
+    "4. 最多报 12 处，按在文中出现的先后顺序；没有把握就返回空数组。\n"
+    "只输出 JSON，格式：{\"items\":[{\"quote\":\"原文片段\",\"original\":\"限多\",\"suggest\":\"限制\"}]}，不要输出任何其他内容。"
 )
 
 
@@ -1343,6 +1368,80 @@ def calibrate_grade(report, grid_count, target):
     return report
 
 
+def sanitize_ocr_text(raw):
+    """剥离视觉模型自作主张加入正文的开场白/说明/结束语。
+    返回 (清洗后文本, 剔除条数)。只认“助手腔”强信号，避免误删作文原句。"""
+    text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+    dropped = 0
+
+    # 整行即开场白/结束语（独立成行时）
+    meta_line_res = [
+        re.compile(r"^\s*(?:好的?[，,]?\s*)?(?:以下|下面|这是|这是我|为您|已为您|我为您|下面是我)"
+                   r"[^\n]{0,30}(?:转写|识别|辨认|作文|内容|文本|文字|结果)[^\n]{0,12}[。.：:]?\s*$"),
+        re.compile(r"^\s*(?:转写|识别)(?:结果|内容|文本|如下)[：:]?\s*$"),
+        re.compile(r"^\s*(?:希望(?:这|以上|对您|能帮)|如果(?:您|你)(?:还|有|需要)|如有(?:需要|疑问)|"
+                   r"请(?:您|你)?(?:提供|重新|再拍|上传))[^\n]{0,60}[。.]?\s*$"),
+    ]
+    kept_lines = []
+    for line in text.split("\n"):
+        s = line.strip()
+        if s and any(rx.search(s) for rx in meta_line_res):
+            dropped += 1
+            continue
+        kept_lines.append(line)
+    text = "\n".join(kept_lines)
+
+    # 括号内的 OCR 说明，如（注：部分文字无法辨认）
+    paren_re = re.compile(r"[（(【\[]\s*(?:注[：:]?)?[^\n）)】\]]{0,50}"
+                          r"(?:无法辨认|未能识别|难以辨认|无法识别|识别不出|看不清|较为模糊|过于潦草)"
+                          r"[^\n）)】\]]{0,50}[）)】\]]")
+
+    def _drop_paren(_m):
+        nonlocal dropped
+        dropped += 1
+        return ""
+
+    text = paren_re.sub(_drop_paren, text)
+
+    # 句级删除：
+    #  - always：作文正文几乎不可能出现的“助手腔”短语，命中即删整句；
+    #  - cond+ctx：“无法识别”等词在议论文里可能是正常表达（如“我们无法识别
+    #    生活的真相”），必须同句再出现图片/字迹/您/转写等 OCR 语境词才删。
+    always_re = re.compile(
+        r"过于潦草|字迹潦草|比较潦草|较为潦草|书写潦草|"
+        r"过于模糊|比较模糊|较为模糊|图片模糊|照片模糊|图像模糊|"
+        r"不够清晰|更为清晰|更加清晰|图片质量|"
+        r"为您转写|为您识别|帮您转写|帮您识别|进一步转写|继续为您|尽力(?:为您|帮您)|"
+        r"请(?:您|你)?(?:提供|上传|拍摄|重新拍|再拍|重拍)|提供更.{0,4}清晰|重新拍摄|重新上传|拍一?张更|"
+        r"如果(?:您|你)需要|若您需要|如有需要|"
+        r"希望(?:对您|能帮|这|以上|可以帮助)|谢谢(?:观看|理解|信任|配合)|感谢理解|"
+        r"我是(?:AI|人工智能|语言模型)|作为(?:一个)?(?:AI|人工智能|语言模型)|"
+        r"抱歉[，,]?\s*(?:我|无法|未能|对不)|对不起[，,]?\s*(?:我|无法|未能)"
+    )
+    cond_re = re.compile(
+        r"未能识别|无法识别|难以辨认|无法辨认|不能辨认|识别不出|辨认不出|无法看清|看不清字"
+    )
+    ctx_re = re.compile(
+        r"图(?:片|像|中|里)|照片|字迹|文字|转写|辨认|潦草|模糊|清晰|您|给您|提供|拍摄|上传"
+    )
+    # 换行也作为句子边界：模型的旁白通常独立成段，不能让它带走前一句正文
+    parts = re.split(r"([。！？!?；;\n])", text)
+    out = []
+    for i in range(0, len(parts), 2):
+        sent, punct = parts[i], (parts[i + 1] if i + 1 < len(parts) else "")
+        if sent.strip() and (always_re.search(sent) or
+                             (cond_re.search(sent) and ctx_re.search(sent))):
+            dropped += 1
+            if punct == "\n":
+                out.append(punct)  # 保留换行，避免段落被合并
+            continue
+        out.append(sent + punct)
+    text = "".join(out)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text, dropped
+
+
 def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens):
     """调用 OpenAI 兼容 chat/completions。返回报告 dict；失败抛 LLMError。"""
     url = base_url.rstrip("/") + "/chat/completions"
@@ -1583,6 +1682,7 @@ class Handler(BaseHTTPRequestHandler):
                     "smsEnabled": ALIYUN_SMS_ENABLED or SMS_DEBUG,
                 },
                 "ocr": {"enabled": bool(OCR_API_KEY)},
+                "proofread": {"enabled": bool(PROOFREAD_API_KEY)},
             })
             return
         if path == "/api/auth/me":
@@ -1648,6 +1748,11 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_body(OCR_MAX_BODY)
             if data is not None:
                 self.handle_ocr(data)
+            return
+        if path == "/api/proofread":
+            data = self._read_body(120 * 1024)
+            if data is not None:
+                self.handle_proofread(data)
             return
         if path not in ("/api/grade", "/api/analyze"):
             self.send_error(404, "Not Found")
@@ -2002,17 +2107,76 @@ class Handler(BaseHTTPRequestHandler):
         t0 = time.time()
         try:
             # glm-4v-flash 的 max_tokens 上限为 1024（单页手写作文约 300-400 字，足够）
-            text = call_vision_llm(OCR_API_KEY, OCR_BASE_URL, OCR_MODEL,
-                                   OCR_SYSTEM_PROMPT, image, max_tokens=1024)
+            raw_text = call_vision_llm(OCR_API_KEY, OCR_BASE_URL, OCR_MODEL,
+                                       OCR_SYSTEM_PROMPT, image, max_tokens=1024)
         except LLMError as e:
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
+            return
+        text, dropped_meta = sanitize_ocr_text(raw_text)
+        if not text:
+            self._send_json({"ok": False, "code": "empty_result",
+                             "message": "未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。"}, 502)
             return
         if counted and user:
             db_usage_bump(user["id"], today_cn(), "analyzes")
         self._send_json({"ok": True, "text": text,
                          "engine": "vision", "model": OCR_MODEL,
+                         "droppedMeta": dropped_meta,
                          "elapsed": round(time.time() - t0, 1)})
+
+    def handle_proofread(self, data):
+        """识别文本的疑似错字校对（只标注、不改正文；调用免费的 glm-4-flash）。
+        要求登录但不占用每日批改/审题计数。"""
+        if not PROOFREAD_API_KEY:
+            self._send_json({"ok": False, "code": "proofread_disabled"}, 503)
+            return
+        text = str(data.get("text") or "").strip()
+        if len(text) < 20:
+            self._send_json({"ok": False, "code": "too_short",
+                             "message": "文本太短，无需校对"}, 400)
+            return
+        user = self._current_user()
+        if not ALLOW_ANON_SERVER_AI and not user:
+            self._api_error("login_required", "识别校对需要先登录账号。", 401)
+            return
+
+        t0 = time.time()
+        try:
+            rep = call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
+                           PROOFREAD_SYSTEM_PROMPT,
+                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200)
+        except LLMError as e:
+            status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
+            self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
+            return
+
+        items, seen = [], set()
+        raw_items = rep.get("items") if isinstance(rep, dict) else None
+        if isinstance(raw_items, list):
+            for it in raw_items:
+                if not isinstance(it, dict):
+                    continue
+                quote = str(it.get("quote") or "").strip()
+                original = str(it.get("original") or "").strip()
+                suggest = str(it.get("suggest") or "").strip()
+                # 硬校验：长度合理、quote 必须是原文连续子串且在全文中唯一、original 在 quote 内、
+                # 建议词确实与原词不同
+                if not (1 <= len(original) <= 8 and 1 <= len(suggest) <= 8 and original != suggest):
+                    continue
+                if not quote or len(quote) > 40 or original not in quote:
+                    continue
+                if text.count(quote) != 1:
+                    continue
+                key = (quote, original, suggest)
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append({"quote": quote, "original": original, "suggest": suggest})
+                if len(items) >= 12:
+                    break
+        self._send_json({"ok": True, "items": items,
+                         "model": PROOFREAD_MODEL, "elapsed": round(time.time() - t0, 1)})
 
     def handle_grade(self, data, api_key, base_url, model):
         text = (data.get("text") or "").strip()

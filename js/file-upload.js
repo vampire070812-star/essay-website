@@ -122,6 +122,40 @@
       .replace(/^\s+|\s+$/g, '');
   }
 
+  // 剥离视觉模型可能塞进正文的开场白/说明（服务端已清洗，此处为兜底，规则保持同步）
+  function sanitizeOcrText(raw) {
+    var text = String(raw || '').replace(/\r\n?/g, '\n');
+    var dropped = 0;
+    var META_LINE = [
+      /^\s*(?:好的?[，,]?\s*)?(?:以下|下面|这是|这是我|为您|已为您|我为您|下面是我)[^\n]{0,30}(?:转写|识别|辨认|作文|内容|文本|文字|结果)[^\n]{0,12}[。.：:]?\s*$/,
+      /^\s*(?:转写|识别)(?:结果|内容|文本|如下)[：:]?\s*$/,
+      /^\s*(?:希望(?:这|以上|对您|能帮)|如果(?:您|你)(?:还|有|需要)|如有(?:需要|疑问)|请(?:您|你)?(?:提供|重新|再拍|上传))[^\n]{0,60}[。.]?\s*$/
+    ];
+    text = text.split('\n').filter(function (line) {
+      var s = line.trim();
+      if (s && META_LINE.some(function (rx) { return rx.test(s); })) { dropped++; return false; }
+      return true;
+    }).join('\n');
+    text = text.replace(/[（(【\[]\s*(?:注[：:]?)?[^\n）)】\]]{0,50}(?:无法辨认|未能识别|难以辨认|无法识别|识别不出|看不清|较为模糊|过于潦草)[^\n）)】\]]{0,50}[）)】\]]/g,
+      function () { dropped++; return ''; });
+    var ALWAYS = /过于潦草|字迹潦草|比较潦草|较为潦草|书写潦草|过于模糊|比较模糊|较为模糊|图片模糊|照片模糊|图像模糊|不够清晰|更为清晰|更加清晰|图片质量|为您转写|为您识别|帮您转写|帮您识别|进一步转写|继续为您|尽力(?:为您|帮您)|请(?:您|你)?(?:提供|上传|拍摄|重新拍|再拍|重拍)|提供更.{0,4}清晰|重新拍摄|重新上传|拍一?张更|如果(?:您|你)需要|若您需要|如有需要|希望(?:对您|能帮|这|以上|可以帮助)|谢谢(?:观看|理解|信任|配合)|感谢理解|我是(?:AI|人工智能|语言模型)|作为(?:一个)?(?:AI|人工智能|语言模型)|抱歉[，,]?\s*(?:我|无法|未能|对不)|对不起[，,]?\s*(?:我|无法|未能)/;
+    var COND = /未能识别|无法识别|难以辨认|无法辨认|不能辨认|识别不出|辨认不出|无法看清|看不清字/;
+    var CTX = /图(?:片|像|中|里)|照片|字迹|文字|转写|辨认|潦草|模糊|清晰|您|给您|提供|拍摄|上传/;
+    var parts = text.split(/([。！？!?；;\n])/);
+    var out = [];
+    for (var i = 0; i < parts.length; i += 2) {
+      var sent = parts[i] || '';
+      var punct = parts[i + 1] || '';
+      if (sent.trim() && (ALWAYS.test(sent) || (COND.test(sent) && CTX.test(sent)))) {
+        dropped++;
+        if (punct === '\n') out.push(punct);
+        continue;
+      }
+      out.push(sent + punct);
+    }
+    return { text: normalizeText(out.join('')), dropped: dropped };
+  }
+
   function isCJK(ch) {
     return /[一-鿿]/.test(ch);
   }
@@ -708,7 +742,8 @@
               return o;
             });
             if (firstErr) throw firstErr;
-            var merged = normalizeText(joinStripTexts(parts));
+            var cleaned = sanitizeOcrText(joinStripTexts(parts));
+            var merged = cleaned.text;
             if (!merged) {
               var e2 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
               e2.handled = true;
