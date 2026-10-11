@@ -129,17 +129,21 @@ PROOFREAD_MAX_TEXT = 6000
 PROOFREAD_SYSTEM_PROMPT = (
     "你是中文手写作文的 OCR 校对员。用户会给你一段手写作文照片的机器转写文本，"
     "其中可能有少量因手写字形相近、拍照模糊造成的识别错字。"
-    "任务：只找出“明显是识别错误”的字词——原词在中文里不成词、或在此语境语义不通，"
+    "请分两档找出可疑字词，输出 JSON："
+    "{\"items\":[{\"quote\":\"原文片段\",\"original\":\"可疑词\",\"suggest\":\"建议改为\",\"level\":\"high 或 low\"}]}。\n"
+    "第一档 level=\"high\"（明显错字）：原词在中文里不成词、或在此语境语义不通，"
     "而替换成一个形近或音近的常见词后句意立刻通顺（例如：软伴→软件、限多→限制、"
-    "内客→内容、机戒→机械、出板→出版）。\n"
-    "严格要求：\n"
-    "1. 宁缺毋滥：但凡原句通顺、可能是作者本意的，一律不报；不要挑作者自己写的错别字、"
-    "语病、标点问题、用词好坏，不要做任何润色建议；\n"
-    "2. 不报告人名、地名、专有名词、文言表达和创意化用词；\n"
-    "3. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
-    "且要保证 quote 在全文中只出现一次；original 是其中的错词，suggest 是最可能的正确词；\n"
-    "4. 最多报 12 处，按在文中出现的先后顺序；没有把握就返回空数组。\n"
-    "只输出 JSON，格式：{\"items\":[{\"quote\":\"原文片段\",\"original\":\"限多\",\"suggest\":\"限制\"}]}，不要输出任何其他内容。"
+    "内客→内容、机戒→机械、出板→出版）。最多 12 处。\n"
+    "第二档 level=\"low\"（可疑词）：读起来可疑、有可能是识别错误，但不能完全排除是作者原词"
+    "（如人名、书名、术语、生僻但说得通的词）的；同样必须满足替换一个形近/音近字后更通顺，"
+    "suggest 给出你认为最可能的正确词。最多 4 处，宁少勿多；没有把握就一档都不报。\n"
+    "两档共同要求：\n"
+    "1. 只报形近/音近字级别的识别错误：不挑作者自己写的错别字、语病、标点问题、用词好坏，"
+    "不做润色建议；不报告人名、地名、专有名词、文言表达和创意化用词；\n"
+    "2. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
+    "且要保证 quote 在全文中只出现一次；original 是其中的可疑词；\n"
+    "3. original 与 suggest 各不超过 4 个字且必须不同；按在文中出现的先后顺序。\n"
+    "只输出 JSON，不要输出任何其他内容。"
 )
 
 
@@ -2160,6 +2164,7 @@ class Handler(BaseHTTPRequestHandler):
                 quote = str(it.get("quote") or "").strip()
                 original = str(it.get("original") or "").strip()
                 suggest = str(it.get("suggest") or "").strip()
+                level = "low" if str(it.get("level") or "").strip() == "low" else "high"
                 # 硬校验：长度合理、quote 必须是原文连续子串且在全文中唯一、original 在 quote 内、
                 # 建议词确实与原词不同
                 if not (1 <= len(original) <= 8 and 1 <= len(suggest) <= 8 and original != suggest):
@@ -2168,14 +2173,16 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if text.count(quote) != 1:
                     continue
-                key = (quote, original, suggest)
+                key = (quote, original)
                 if key in seen:
                     continue
                 seen.add(key)
-                items.append({"quote": quote, "original": original, "suggest": suggest})
-                if len(items) >= 12:
-                    break
-        self._send_json({"ok": True, "items": items,
+                items.append({"quote": quote, "original": original,
+                              "suggest": suggest, "level": level})
+        # 红档在前、蓝档在后，各自限量（红 12、蓝 4）
+        highs = [x for x in items if x["level"] == "high"][:12]
+        lows = [x for x in items if x["level"] == "low"][:4]
+        self._send_json({"ok": True, "items": highs + lows,
                          "model": PROOFREAD_MODEL, "elapsed": round(time.time() - t0, 1)})
 
     def handle_grade(self, data, api_key, base_url, model):

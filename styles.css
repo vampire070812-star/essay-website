@@ -983,6 +983,28 @@ textarea {
   .pc-row { flex-direction: column; align-items: stretch; gap: 6px; }
   .pc-fix-btn { align-self: flex-end; }
 }
+.pc-hl-blue { color: var(--blue); }
+/* 校对卡第二档：可疑词标蓝（可能识别有误但无法确定） */
+.pc-row.low { border-color: #bfdbfe; }
+.pc-row.low .pc-quote mark { background: #dbeafe; color: #1d4ed8; }
+.pc-row.low .pc-fix-btn { background: var(--blue); }
+.pc-row.low .pc-fix-btn:active { background: #1d4ed8; }
+
+/* 正文框内标红/标蓝覆盖层：文字透明只画底色，字体与边距由 JS 按 textarea 计算样式同步 */
+.textarea-wrap { position: relative; background: #fcfcfd; border-radius: 10px; }
+.text-highlights {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  overflow: hidden; pointer-events: none; user-select: none;
+  color: transparent;
+  white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word;
+}
+.text-highlights mark {
+  background: rgba(239, 68, 68, .22); color: transparent;
+  border-radius: 3px; padding: 0;
+}
+.text-highlights mark.hl-blue { background: rgba(37, 99, 235, .16); }
+/* textarea 背景透明让覆盖层底色透出（ID 选择器优先级高于 :focus 规则，聚焦时不闪白） */
+#essay-text { background: transparent; }
 
 @media (max-width: 600px) {
   .upload-zone { flex-wrap: wrap; padding: 12px; gap: 8px; }

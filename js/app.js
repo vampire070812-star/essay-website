@@ -98,6 +98,7 @@
     updateCount();
     tipEl.textContent = '';
     tipEl.classList.remove('show');
+    renderTextHighlights();
   });
 
   function loadSample(s) {
@@ -140,6 +141,89 @@
     pcClose = $('pc-close');
   var proofSeq = 0, proofItems = [], proofDone = {};
 
+  /* ---------- 正文框内标红/标蓝覆盖层 ----------
+   * 原生 textarea 不支持富文本：在 textarea 背后垫一个同字体/同边距的
+   * 覆盖层，文字透明、只画高亮底色；textarea 背景透明让底色透出来。 */
+  var hlEl = $('text-highlights');
+
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // 把 textarea 的计算样式同步到覆盖层，保证逐像素对齐
+  function syncHlStyle() {
+    if (!hlEl) return;
+    var cs = window.getComputedStyle(textEl);
+    ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing',
+     'textIndent', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+     'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+     'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+     'whiteSpace', 'overflowWrap'].forEach(function (p) { hlEl.style[p] = cs[p]; });
+  }
+
+  // textarea 出现纵向滚动条时内容区变窄，覆盖层需补上同等右内边距，否则换行错位
+  function syncHlMetrics() {
+    syncHlStyle();
+    if (!hlEl) return;
+    var bl = parseFloat(hlEl.style.borderLeftWidth) || 0;
+    var br = parseFloat(hlEl.style.borderRightWidth) || 0;
+    var sb = (textEl.offsetWidth - textEl.clientWidth) - bl - br;
+    if (!(sb > 0)) sb = 0;
+    var padR = parseFloat(hlEl.style.paddingRight) || 0;
+    hlEl.style.paddingRight = (padR + sb) + 'px';
+  }
+
+  function itemRange(it) {
+    var val = textEl.value;
+    var qi = val.indexOf(it.quote);
+    if (qi < 0) return null;
+    var wi = it.quote.indexOf(it.original);
+    if (wi < 0) return null;
+    var s = qi + wi;
+    return { s: s, e: s + it.original.length, low: it.level === 'low' };
+  }
+
+  function renderTextHighlights() {
+    if (!hlEl) return;
+    syncHlMetrics();
+    var val = textEl.value;
+    var reds = [], blues = [];
+    proofItems.forEach(function (it, idx) {
+      if (proofDone[idx]) return; // 已替换/已失效：不再高亮
+      var r = itemRange(it);
+      if (!r) return;
+      (r.low ? blues : reds).push(r);
+    });
+    function sweep(list) {
+      list.sort(function (a, b) { return a.s - b.s; });
+      var out = [], last = -1;
+      list.forEach(function (r) {
+        if (r.s >= last) { out.push(r); last = r.e; }
+      });
+      return out;
+    }
+    reds = sweep(reds);
+    // 蓝色让位于红色：与任何红色区间重叠的蓝色丢弃，剩余蓝条内部再去重叠
+    blues = sweep(blues.filter(function (b) {
+      return !reds.some(function (r) { return b.s < r.e && r.s < b.e; });
+    }));
+    var all = reds.concat(blues).sort(function (a, b) { return a.s - b.s; });
+    var html = '', pos = 0, i, r;
+    for (i = 0; i < all.length; i++) {
+      r = all[i];
+      if (r.s > pos) html += escHtml(val.slice(pos, r.s));
+      html += '<mark class="' + (r.low ? 'hl-blue' : '') + '">' + escHtml(val.slice(r.s, r.e)) + '</mark>';
+      pos = r.e;
+    }
+    html += escHtml(val.slice(pos));
+    hlEl.innerHTML = html;
+    hlEl.scrollTop = textEl.scrollTop;
+  }
+
+  textEl.addEventListener('scroll', function () { if (hlEl) hlEl.scrollTop = textEl.scrollTop; });
+  window.addEventListener('resize', renderTextHighlights);
+  window.addEventListener('load', function () { syncHlMetrics(); renderTextHighlights(); });
+
   function resetProof() {
     proofSeq++;
     proofItems = [];
@@ -148,6 +232,7 @@
     pcRows.innerHTML = '';
     pcLoading.hidden = false;
     pcLoading.textContent = '正在校对识别文字…';
+    renderTextHighlights();
   }
 
   function spliceOne(s, find, repl) {
@@ -185,9 +270,10 @@
   function renderProofRows() {
     pcLoading.hidden = true;
     pcRows.innerHTML = '';
-    var remain = 0;
+    var remainR = 0, remainB = 0;
     proofItems.forEach(function (it, idx) {
-      var row = el('div', 'pc-row' + (proofDone[idx] === 'stale' ? ' stale' : ''));
+      var low = it.level === 'low';
+      var row = el('div', 'pc-row' + (low ? ' low' : '') + (proofDone[idx] === 'stale' ? ' stale' : ''));
       if (proofDone[idx] === 'done') {
         row.appendChild(el('span', 'pc-done-text', '已将「' + it.original + '」改为「' + it.suggest + '」'));
         var undoBtn = el('button', 'pc-undo', '撤销');
@@ -196,7 +282,7 @@
         undoBtn.dataset.idx = idx;
         row.appendChild(undoBtn);
       } else {
-        if (proofDone[idx] !== 'stale') remain++;
+        if (proofDone[idx] !== 'stale') { if (low) remainB++; else remainR++; }
         var oi = it.quote.indexOf(it.original);
         var quoteBtn = el('button', 'pc-quote');
         quoteBtn.type = 'button';
@@ -209,7 +295,7 @@
         quoteBtn.dataset.action = 'accept';
         quoteBtn.dataset.idx = idx;
         row.appendChild(quoteBtn);
-        var fixBtn = el('button', 'pc-fix-btn', '改为「' + it.suggest + '」');
+        var fixBtn = el('button', 'pc-fix-btn', '改为「' + it.suggest + '」' + (low ? '？' : ''));
         fixBtn.type = 'button';
         if (proofDone[idx] === 'stale') { fixBtn.disabled = true; fixBtn.textContent = '该处已被修改'; }
         fixBtn.dataset.action = 'accept';
@@ -218,9 +304,13 @@
       }
       pcRows.appendChild(row);
     });
-    pcCount.textContent = remain
-      ? '发现 ' + remain + ' 处疑似识别错字'
+    var parts = [];
+    if (remainR) parts.push(remainR + ' 处疑似识别错字');
+    if (remainB) parts.push(remainB + ' 处可疑词');
+    pcCount.textContent = parts.length
+      ? '发现 ' + parts.join('、')
       : (proofItems.length ? '已全部处理' : '');
+    renderTextHighlights();
   }
 
   pcRows.addEventListener('click', function (e) {
