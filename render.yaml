@@ -14,3 +14,13 @@ services:
         sync: false
       - key: LLM_MODEL
         sync: false
+      # 试运行：必须登录（仅放行启动时播种的 100 个账号）
+      - key: ALLOW_ANON_AI
+        value: "0"
+      - key: GRADES_PER_DAY
+        value: "30"
+      - key: ANALYZES_PER_DAY
+        value: "60"
+      # 试运行账号清单，格式：user001:密码,user002:密码,...（每次启动自动播种，防止免费实例磁盘重置丢账号）
+      - key: TRIAL_ACCOUNTS
+        sync: false

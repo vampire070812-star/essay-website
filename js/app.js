@@ -31,7 +31,7 @@
     if (examSel.value) {
       promptEl.value = examSel.value;
       analyzeBox.hidden = true;
-      analyzeHint.textContent = '已载入题目，点击“AI 审题指导”查看题型、立意层次与提纲。';
+      analyzeHint.textContent = '已载入题目，点击“审题指导”查看题型、立意层次与提纲。';
       analyzeHint.className = 'analyze-hint';
     }
   });
@@ -61,31 +61,36 @@
       '因此，我们应当坚守内心的信念，不受传统观念的束缚，独立思考，从心出发，在常识的浪潮中保留属于自己的判断。'
   };
 
-  // 反面样本：2025 虹口一模（细节 / 钝感）——只写一面、以例代证、字数不足
-  var SAMPLE_2 = {
-    promptIdx: 10, // 虹口
-    title: '细节决定成败',
-    type: '议论文',
-    target: 800,
-    text:
-      '我觉得细节是世界上最重要的东西。不管做什么事情，都要注意细节，如果不注意细节的话，就什么事情都做不成。俗话说，细节决定成败，这句话一点也没错。\n' +
-      '比如我上次学骑自行车,开始的时候我总是摔倒，后来我发现是车座的细节没有调好，我调好了车座，然后就学会了。还有爱迪生发明电灯，失败了很多次，但是他注意到了灯丝材料的细节，换了一千多种材料，最后终于成功了，真是绝绝子。达·芬奇画鸡蛋也是一样的道理，他每天都画鸡蛋，注意每一个细节，最后成了大画家。\n' +
-      '在学习上也是这样。我有一次数学考试就是因为一个小数点的细节被扣了分，从那以后我每次做完题都认真检查细节，成绩果然提高了。我同桌也说，他打篮球的时候注意手腕发力的细节，投篮就准了很多。\n' +
-      '古人说，千里之堤，溃于蚁穴，说的就是细节的重要性。一个蚂蚁洞看起来很小，但是不注意的话，整个大堤都会垮掉，这难道不是细节的力量吗？\n' +
-      '所以说，细节真的非常非常重要。我们做任何事情都要注意细节，上课要注意细节，写作业要注意细节，考试的时候更要注意细节。只有注意细节，才能取得最后的成功。在生活中，我们要从身边的小事做起，认认真真对待每一个细节，不马虎，不粗心，把注重细节当成一种习惯，坚持下去就一定会有收获！！！'
-  };
-
   var AI_STEPS = [
-    'AI 逐词批注题目材料，核查审题',
-    'AI 通读全文，把握中心论点与分档',
-    'AI 检查论证层次、论据分析与硬伤',
-    'AI 按上海五类档赋分（70 分制）',
-    'AI 撰写逐句批注与修改建议'
+    '逐词批注题目材料，核查审题',
+    '通读全文，把握中心论点与分档',
+    '检查论证层次、论据分析与硬伤',
+    '按上海五类档赋分（70 分制）',
+    '撰写逐句批注与修改建议'
   ];
 
   var lastSubmit = null;
   var gradingTimer = null;
   var serverCfg = null;
+
+  /* ---------- 本地状态持久化（刷新页面不丢：登录态 / 输入草稿 / 批改报告） ---------- */
+  var LS_DRAFT = 'eg_draft_v1',  // localStorage：写作表单草稿（免登录用户也生效）
+    LS_USER = 'eg_user_v1',      // localStorage：最近一次登录的公开信息（即时显示，服务端核对）
+    SS_VIEW = 'eg_view_v1',      // sessionStorage：刷新前所在面板
+    SS_REPORT = 'eg_report_v1';  // sessionStorage：最近一份批改报告（刷新后原地恢复）
+  function storeGet(key, sess) {
+    try {
+      var raw = (sess ? sessionStorage : localStorage).getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function storeSet(key, val, sess) {
+    try { (sess ? sessionStorage : localStorage).setItem(key, JSON.stringify(val)); }
+    catch (e) { /* 隐私模式 / 配额满：静默降级 */ }
+  }
+  function storeDel(key, sess) {
+    try { (sess ? sessionStorage : localStorage).removeItem(key); } catch (e) {}
+  }
 
   /* ---------- 字数统计（考场占格口径：汉字与标点均占一格） ---------- */
   function updateCount() { countEl.textContent = EssayEngine.gridLen(textEl.value); }
@@ -104,12 +109,11 @@
     targetEl.value = s.target;
     textEl.value = s.text;
     analyzeBox.hidden = true;
-    analyzeHint.textContent = '已载入对应作文题目，建议先点“AI 审题指导”，再看这篇作文的批改结果。';
+    analyzeHint.textContent = '已载入对应作文题目，建议先点“审题指导”，再看这篇作文的批改结果。';
     analyzeHint.className = 'analyze-hint';
     updateCount();
   }
   $('load-sample-1').addEventListener('click', function () { loadSample(SAMPLE_1); });
-  $('load-sample-2').addEventListener('click', function () { loadSample(SAMPLE_2); });
   $('btn-clear').addEventListener('click', function () {
     textEl.value = '';
     titleEl.value = '';
@@ -246,6 +250,8 @@
     ['input', 'grading', 'report'].forEach(function (name, i) {
       $('panel-' + name).classList.toggle('active', i + 1 === n);
     });
+    // 记住当前面板：刷新页面时据此留在原页面（批改中 step2 刷新则安全回到写作页）
+    storeSet(SS_VIEW, { step: n }, true);
     if (push === true && (!history.state || history.state.step !== n)) {
       history.pushState({ step: n }, '');
     }
@@ -256,34 +262,15 @@
     var n = e.state && e.state.step ? e.state.step : 1;
     showStep(n, false);
   });
-  history.replaceState({ step: 1 }, '');
+  // 启动时决定落点：批改报告页且有缓存报告 → 留在报告页（末尾初始化时渲染）；
+  // 其余情况（含批改中途刷新）回到写作输入页
+  var bootReport = storeGet(SS_REPORT, true);
+  var bootView = storeGet(SS_VIEW, true);
+  var bootStep = (bootView && bootView.step === 3 && bootReport && bootReport.report) ? 3 : 1;
+  if (bootStep !== 3) storeSet(SS_VIEW, { step: 1 }, true);
+  history.replaceState({ step: bootStep }, '');
 
-  /* ---------- 批改方式（仅 AI 批改） ---------- */
-  function currentMode() { return 'ai'; }
-
-  function refreshModeUI() {
-    var badge = $('mode-badge');
-    badge.textContent = '🤖 AI 模式';
-    badge.className = 'mode-badge mode-ai';
-    var localBtn = $('mode-local');
-    if (localBtn && localBtn.parentNode) localBtn.parentNode.removeChild(localBtn);
-    refreshHint();
-  }
-
-  function refreshHint() {
-    var hint = $('ai-hint');
-    if (serverCfg && serverCfg.configured) {
-      var needLogin = serverCfg.auth && serverCfg.auth.loginRequired && !EssayAuth.user();
-      hint.innerHTML = '将使用网站统一配置的 <b>' + escapeHtml(serverCfg.model) + '</b> 进行 AI 批改，按上海卷 70 分标准整体评判。' +
-        (needLogin ? '使用共享额度需先<span style="color:var(--primary);font-weight:700">登录账号</span>（每日有批改次数限制）。' : '');
-      hint.className = 'ai-hint ai-ok';
-    } else {
-      hint.innerHTML = '网站尚未配置大模型服务，请稍后再试或联系管理员。';
-      hint.className = 'ai-hint ai-warn';
-    }
-  }
-
-  $('mode-ai').addEventListener('click', function () { EssayAI.setMode('ai'); refreshModeUI(); });
+  /* ---------- 批改方式（仅一种，页面不再展示切换） ---------- */
 
   /* ---------- 审题 ---------- */
   function runAnalyze() {
@@ -300,22 +287,20 @@
     analyzeHint.className = 'analyze-hint';
     EssayAI.analyze(p, null).then(function (data) {
       renderAnalyze(data.report, data.engine, data.model);
-      analyzeHint.textContent = data.engine === 'local'
-        ? '当前为本地规则粗提取结果（题型与关键词可信，深度分析建议配置 AI）。'
-        : '审题完成：请重点参考“一类立意”与“偏题风险”，再动笔写作。';
+      analyzeHint.textContent = '审题完成：请重点参考“一类立意”与“偏题风险”，再动笔写作。';
       analyzeHint.className = 'analyze-hint ok';
     }).catch(function (err) {
       if (err && err.code === 'login_required') {
-        analyzeHint.textContent = '使用网站共享的 AI 审题需要先登录（本地规则审题不受限）。';
+        analyzeHint.textContent = '审题指导需要登录后使用。';
         analyzeHint.className = 'analyze-hint error';
-        openAuth('login', err.message || '使用网站共享的 AI 审题需要先登录。');
+        openAuth('login', err.message || '审题指导需要先登录。');
         return;
       }
       analyzeHint.textContent = '审题请求失败：' + (err.message || '未知错误') + '（本地服务需保持运行）';
       analyzeHint.className = 'analyze-hint error';
     }).then(function () {
       analyzeBtn.disabled = false;
-      analyzeBtn.textContent = '🔍 AI 审题指导';
+      analyzeBtn.textContent = '🔍 审题指导';
     });
   }
   analyzeBtn.addEventListener('click', runAnalyze);
@@ -362,7 +347,7 @@
       return '<li>' + str(x, 240) + '</li>';
     }).join('');
 
-    // 思辨路径分析（写作前思维地图）
+    // 思辨路径分析
     var dgHtml = '';
     var dg = r.dialecticGuide && typeof r.dialecticGuide === 'object' ? r.dialecticGuide : null;
     if (dg) {
@@ -379,7 +364,7 @@
       var brk = dg.breakthrough && typeof dg.breakthrough === 'object' ? dg.breakthrough : {};
       dgHtml =
         '<div class="ar-section ar-dialectic">' +
-          '<h4>🧭 思辨路径分析<span class="dg-h-sub">写作前的思维地图 · 上海卷分档关键</span></h4>' +
+          '<h4>🧭 思辨路径分析</h4>' +
           (dg.tension ? '<div class="dg-tension"><span class="dg-k">本题张力</span>' +
             str(dg.tension, 420) + '</div>' : '') +
           (lp ? '<div class="dg-ladder">' + lp + '</div>' : '') +
@@ -397,7 +382,6 @@
       '<div class="ar-head">' +
         '<h3>审题指导</h3>' +
         '<span class="ar-tag' + (isLocal ? ' local' : '') + '">' + str(r.topicType, 12) + '</span>' +
-        '<span class="ar-engine">' + (isLocal ? '本地规则 · 关键词粗提取' : 'AI · ' + str(model, 30)) + '</span>' +
         '<button type="button" class="btn btn-ghost btn-print-analyze no-print" id="btn-print-analyze" title="把审题指导单独生成一份排版整齐的 PDF">📄 生成 PDF</button>' +
       '</div>' +
       (r.warning ? '<div class="ar-warning">' + str(r.warning, 300) + '</div>' : '') +
@@ -437,15 +421,15 @@
         prompt: promptEl.value.trim()
       }
     };
-    // 仅 AI 批改：服务端未配置大模型时提示
+    // 服务端未配置好批改服务时提示
     if (!(serverCfg && serverCfg.configured)) {
-      tipEl.textContent = '网站尚未配置大模型服务，暂时无法批改，请稍后再试或联系管理员。';
+      tipEl.textContent = '系统维护中，暂时无法批改，请稍后再试或联系管理员。';
       tipEl.classList.add('show');
       return;
     }
-    // 用网站共享额度：提前拦截未登录用户（服务端也会强制校验）
+    // 提前拦截未登录用户（服务端也会强制校验）
     if (serverCfg.auth && serverCfg.auth.loginRequired && !EssayAuth.user()) {
-      openAuth('login', '使用网站共享的 AI 批改需要先登录账号。登录后还会自动云存批改历史与作文草稿。');
+      openAuth('login', '批改需要先登录账号，登录后批改历史与作文草稿会自动云端保存。');
       return;
     }
     runAI();
@@ -471,7 +455,7 @@
       if (err.code === 'login_required') {
         // 会话过期或未登录：回到写作页并弹出登录框
         showStep(1);
-        openAuth('login', err.message || '使用网站共享 AI 需要先登录。');
+        openAuth('login', err.message || '请先登录后再使用。');
       } else {
         showGradeError(err);
       }
@@ -546,16 +530,16 @@
 
   function friendlyTitle(code) {
     return ({
-      no_key: '未配置 API Key',
-      auth_or_param: '鉴权或模型配置有误',
-      bad_config: '配置不完整',
-      unavailable: '大模型服务暂不可用',
-      bad_response: '模型返回格式异常',
-      timeout: 'AI 批改超时',
+      no_key: '服务暂未配置',
+      auth_or_param: '服务配置有误',
+      bad_config: '服务配置不完整',
+      unavailable: '服务暂时不可用',
+      bad_response: '批改结果返回异常',
+      timeout: '批改超时',
       too_short: '作文太短',
       login_required: '需要先登录',
       quota_exceeded: '今日次数已达上限'
-    })[code] || 'AI 批改失败';
+    })[code] || '批改失败';
   }
 
   $('ge-back').addEventListener('click', function () { hideGradeError(); showStep(1); });
@@ -574,14 +558,6 @@
     badge.textContent = r.band.label + ' · ' + r.band.sub;
     badge.style.background = r.band.color + '1f';
     badge.style.color = r.band.color;
-
-    var engineBadge = $('engine-badge');
-    if (r.engine === 'ai') {
-      engineBadge.textContent = '🤖 AI 批改' + (r.model ? ' · ' + r.model : '');
-      engineBadge.style.display = '';
-    } else {
-      engineBadge.style.display = 'none';
-    }
 
     $('report-title').textContent = r.title ? '《' + r.title + '》批改报告' : '作文批改报告';
     $('report-summary').textContent = r.summary;
@@ -640,6 +616,14 @@
       ring.style.strokeDashoffset = C * (1 - r.total / 70);
       animateNumber($('total-score'), r.total, 1000);
     }, 120);
+
+    // 缓存当前报告：刷新批改页时可原地恢复，不退回写作输入页
+    storeSet(SS_REPORT, {
+      report: r,
+      text: rawText || '',
+      opts: lastSubmit ? lastSubmit.opts : null,
+      ts: Date.now()
+    }, true);
   }
 
   function animateNumber(el, target, ms) {
@@ -771,7 +755,7 @@
             '<span class="rw-text">' + str(rw.why, 200) + '</span></div>' : '') +
           '</div>';
       }).join('')
-      : '<p class="logic-empty">本篇没有生成逐句改写示范。使用 AI 批改可获得针对每个病句与断链句的亲手改写。</p>';
+      : '<p class="logic-empty">本篇没有生成逐句改写示范。</p>';
   }
 
   $('btn-again').addEventListener('click', function () { showStep(1, true); textEl.focus(); });
@@ -878,24 +862,10 @@
   var historyModal = $('history-modal');
   var authLoginEl = $('auth-login'),
     authPwEl = $('auth-pw'),
-    authPw2El = $('auth-pw2'),
-    authPhoneEl = $('auth-phone'),
-    authCodeEl = $('auth-code'),
-    authSendEl = $('auth-send'),
     authMsgEl = $('auth-msg'),
-    authSubmitEl = $('auth-submit'),
-    loginField = $('auth-login-field'),
-    pwField = $('auth-pw-field'),
-    pw2Field = $('auth-pw2-field'),
-    phoneField = $('auth-phone-field'),
-    codeField = $('auth-code-field'),
-    tabLogin = $('auth-tab-login'),
-    tabSms = $('auth-tab-sms'),
-    tabRegister = $('auth-tab-register');
+    authSubmitEl = $('auth-submit');
   var historyListEl = $('history-list');
   var cloudNoteEl = $('cloud-save-note');
-  var authMode = 'login';
-  var smsTimer = null, smsLeft = 0;
 
   /* ---------- 轻提示 ---------- */
   function toast(msg, type) {
@@ -924,7 +894,7 @@
     var u = EssayAuth.user();
     $('btn-history').hidden = !u;
     if (!u) {
-      userArea.innerHTML = '<button type="button" class="btn-login" id="btn-login">👤 登录 / 注册</button>';
+      userArea.innerHTML = '<button type="button" class="btn-login" id="btn-login">👤 登录</button>';
       $('btn-login').addEventListener('click', function () { openAuth('login'); });
       return;
     }
@@ -965,162 +935,50 @@
     if (menu) menu.hidden = true;
   });
 
-  /* ---------- 登录 / 注册 / 手机验证码弹窗 ---------- */
+  /* ---------- 登录弹窗 ---------- */
   function showAuthMsg(msg, ok) {
     authMsgEl.textContent = msg || '';
     authMsgEl.className = 'modal-tip' + (ok ? ' ok' : '');
   }
-  function setAuthMode(mode, msg, ok) {
-    authMode = mode;
-    var isSms = mode === 'sms';
-    tabLogin.classList.toggle('active', mode === 'login');
-    tabSms.classList.toggle('active', isSms);
-    tabRegister.classList.toggle('active', mode === 'register');
-    loginField.hidden = isSms;
-    pwField.hidden = isSms;
-    pw2Field.hidden = mode !== 'register';
-    phoneField.hidden = !isSms;
-    codeField.hidden = !isSms;
-    $('auth-title').textContent =
-      isSms ? '手机验证码登录' : (mode === 'register' ? '注册新账号' : '登录账号');
-    authSubmitEl.textContent =
-      isSms ? '登录 / 注册' : (mode === 'register' ? '注册并登录' : '登录');
-    authPwEl.setAttribute('autocomplete', mode === 'register' ? 'new-password' : 'current-password');
-    showAuthMsg(msg || '', !!ok);
-  }
   function openAuth(mode, msg) {
-    if (mode === 'sms' && tabSms.hidden) mode = 'login'; // 服务端未开通短信时回退
-    setAuthMode(mode || 'login', msg || '');
+    showAuthMsg(msg || '', false);
     authModal.hidden = false;
-    setTimeout(function () {
-      (mode === 'sms' ? authPhoneEl : authLoginEl).focus();
-    }, 30);
+    setTimeout(function () { authLoginEl.focus(); }, 30);
   }
   function closeAuth() {
     authModal.hidden = true;
     showAuthMsg('');
   }
-  tabLogin.addEventListener('click', function () { setAuthMode('login'); });
-  tabSms.addEventListener('click', function () { setAuthMode('sms'); });
-  tabRegister.addEventListener('click', function () { setAuthMode('register'); });
   $('auth-close').addEventListener('click', closeAuth);
   authModal.addEventListener('click', function (e) { if (e.target === authModal) closeAuth(); });
-  [authLoginEl, authPwEl, authPw2El].forEach(function (el) {
+  [authLoginEl, authPwEl].forEach(function (el) {
     el.addEventListener('keydown', function (e) { if (e.key === 'Enter') submitAuth(); });
   });
-  authCodeEl.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') submitAuth();
-  });
-  authPhoneEl.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); sendSmsCode(); }
-  });
   authSubmitEl.addEventListener('click', submitAuth);
-  authSendEl.addEventListener('click', sendSmsCode);
-
-  function resetSmsBtn() {
-    clearInterval(smsTimer);
-    smsTimer = null;
-    smsLeft = 0;
-    authSendEl.disabled = false;
-    authSendEl.textContent = '获取验证码';
-  }
-  function startSmsCountdown(sec) {
-    smsLeft = sec;
-    authSendEl.disabled = true;
-    authSendEl.textContent = smsLeft + ' 秒后重发';
-    smsTimer = setInterval(function () {
-      smsLeft -= 1;
-      if (smsLeft <= 0) { resetSmsBtn(); }
-      else { authSendEl.textContent = smsLeft + ' 秒后重发'; }
-    }, 1000);
-  }
-  function sendSmsCode() {
-    var phone = authPhoneEl.value.replace(/\D/g, '');
-    authPhoneEl.value = phone;
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showAuthMsg('请输入正确的 11 位手机号。');
-      return;
-    }
-    authSendEl.disabled = true;
-    authSendEl.textContent = '发送中…';
-    EssayAuth.sendSmsCode(phone).then(function (d) {
-      showAuthMsg('验证码已发送，5 分钟内有效；如未收到请 1 分钟后重新获取。', true);
-      if (d.debugCode) {
-        authCodeEl.value = d.debugCode;
-        toast('调试模式：验证码已自动填入', 'ok');
-      } else {
-        toast('验证码已发送至 ' + phone, 'ok');
-      }
-      startSmsCountdown(d.resendAfter || 60);
-    }).catch(function (err) {
-      resetSmsBtn();
-      showAuthMsg(err.message || '验证码发送失败，请稍后重试。');
-    });
-  }
-
-  function submitSmsAuth() {
-    var phone = authPhoneEl.value.replace(/\D/g, '');
-    var code = authCodeEl.value.replace(/\D/g, '');
-    authPhoneEl.value = phone;
-    authCodeEl.value = code;
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-      showAuthMsg('请输入正确的 11 位手机号。');
-      return;
-    }
-    if (!/^\d{6}$/.test(code)) {
-      showAuthMsg('请输入 6 位数字验证码。');
-      return;
-    }
-    authSubmitEl.disabled = true;
-    authSubmitEl.textContent = '验证中…';
-    EssayAuth.loginSms(phone, code).then(function (d) {
-      closeAuth();
-      authPhoneEl.value = '';
-      authCodeEl.value = '';
-      resetSmsBtn();
-      toast(d.newUser ? '验证成功，已用该手机号自动注册' : '登录成功', 'ok');
-      restoreCloudDraft(true);
-    }).catch(function (err) {
-      showAuthMsg(err.message || '验证失败，请检查手机号与验证码。');
-    }).then(function () {
-      authSubmitEl.disabled = false;
-      authSubmitEl.textContent = '登录 / 注册';
-    });
-  }
 
   function submitAuth() {
-    if (authMode === 'sms') { submitSmsAuth(); return; }
     var loginName = authLoginEl.value.trim();
     var pw = authPwEl.value;
-    if (loginName.length < 3 || loginName.length > 20) {
-      showAuthMsg('账号需为 3-20 位（中英文、数字、下划线或连字符）。');
+    if (!loginName || loginName.length < 3 || loginName.length > 20) {
+      showAuthMsg('请输入发放的账号。');
       return;
     }
-    if (pw.length < 6 || pw.length > 72) {
-      showAuthMsg('密码长度需为 6-72 位。');
+    if (!pw) {
+      showAuthMsg('请输入密码。');
       return;
     }
-    if (authMode === 'register' && pw !== authPw2El.value) {
-      showAuthMsg('两次输入的密码不一致。');
-      return;
-    }
-    var isLogin = authMode === 'login';
     authSubmitEl.disabled = true;
-    authSubmitEl.textContent = isLogin ? '登录中…' : '注册中…';
-    var req = isLogin
-      ? EssayAuth.login(loginName, pw)
-      : EssayAuth.register(loginName, pw);
-    req.then(function () {
+    authSubmitEl.textContent = '登录中…';
+    EssayAuth.login(loginName, pw).then(function () {
       closeAuth();
       authPwEl.value = '';
-      authPw2El.value = '';
-      toast(isLogin ? '登录成功' : '注册成功，已自动登录', 'ok');
+      toast('登录成功', 'ok');
       restoreCloudDraft(true);
     }).catch(function (err) {
-      showAuthMsg(err.message || '操作失败，请稍后重试。');
+      showAuthMsg(err.message || '登录失败，请稍后重试。');
     }).then(function () {
       authSubmitEl.disabled = false;
-      authSubmitEl.textContent = isLogin ? '登录' : '注册并登录';
+      authSubmitEl.textContent = '登录';
     });
   }
 
@@ -1145,16 +1003,23 @@
     updateCount();
   }
   function scheduleDraftSave() {
-    if (!EssayAuth.user()) return;
     clearTimeout(draftTimer);
     draftTimer = setTimeout(function () {
-      if (EssayAuth.user()) EssayAuth.saveDraft(collectDraft()).catch(function () { /* 静默 */ });
-    }, 2500);
+      var d = collectDraft();
+      // 本地草稿：免登录用户也能在刷新后恢复输入
+      storeSet(LS_DRAFT, d);
+      // 云端草稿：登录用户额外跨设备同步
+      if (EssayAuth.user()) EssayAuth.saveDraft(d).catch(function () { /* 静默 */ });
+    }, 1000);
   }
   [promptEl, titleEl, typeEl, targetEl, textEl].forEach(function (el) {
     el.addEventListener('input', scheduleDraftSave);
     el.addEventListener('change', scheduleDraftSave);
   });
+  function draftsEquivalent(a, b) {
+    return String(a && a.text || '') === String(b && b.text || '') &&
+      String(a && a.prompt || '') === String(b && b.prompt || '');
+  }
   function restoreCloudDraft(notify) {
     EssayAuth.loadDraft().then(function (d) {
       if (!d || (!String(d.text || '').trim() && !String(d.prompt || '').trim())) return;
@@ -1162,8 +1027,11 @@
       if (!localHas) {
         applyDraft(d);
         if (notify) toast('已恢复你上次未完成的云端草稿', 'ok');
+      } else if (draftsEquivalent(d, collectDraft())) {
+        // 本地草稿与云端一致（刚刷新过页面），不打扰用户
       } else if (window.confirm('云端存有你上次未写完的作文，是否用云端草稿替换当前页面内容？\n（点“取消”保留当前内容）')) {
         applyDraft(d);
+        storeSet(LS_DRAFT, collectDraft());
         toast('已恢复云端草稿', 'ok');
       }
     }).catch(function () { /* 静默 */ });
@@ -1237,7 +1105,7 @@
   function renderHistory(items) {
     if (!items.length) {
       historyListEl.innerHTML =
-        '<p class="history-empty">还没有批改历史。<br>登录状态下完成的每次 AI 批改都会自动保存在这里。</p>';
+        '<p class="history-empty">还没有批改历史。<br>完成的每次批改都会自动保存在这里。</p>';
       return;
     }
     historyListEl.innerHTML = items.map(function (it) {
@@ -1308,17 +1176,39 @@
   /* ---------- 初始化 ---------- */
   EssayAuth.onChange(function () {
     renderUserArea();
-    refreshHint();
+    // 同步登录态缓存，供下次刷新时先即时显示
+    var u = EssayAuth.user();
+    if (u) storeSet(LS_USER, { user: u, quota: EssayAuth.quota() });
+    else storeDel(LS_USER);
   });
+  // 刷新后先用本地缓存即时显示已登录；refreshMe 再与服务端核对，会话过期则改回未登录
+  var cachedUser = storeGet(LS_USER);
+  if (cachedUser && cachedUser.user) EssayAuth.hydrate(cachedUser);
   renderUserArea();
   updateCount();
-  refreshModeUI();
+  // 恢复本地表单草稿（免登录用户同样生效；云端草稿之后再做一致性核对）
+  var localDraft = storeGet(LS_DRAFT);
+  if (localDraft && (String(localDraft.text || '').trim() || String(localDraft.prompt || '').trim())) {
+    applyDraft(localDraft);
+  }
+  // 刷新前停在批改报告页：原地渲染缓存的报告，绝不退回“作文还没输入”的页面
+  if (bootStep === 3 && bootReport && bootReport.report) {
+    try {
+      lastSubmit = { text: bootReport.text || '', opts: bootReport.opts || {} };
+      renderReport(bootReport.report, bootReport.text || '');
+      showStep(3, false);
+      resetCloudNote();
+      cloudNoteEl.hidden = false;
+      cloudNoteEl.className = 'cloud-save-note';
+      cloudNoteEl.textContent = '↻ 已恢复刷新前的批改报告';
+    } catch (e) {
+      showStep(1, false);
+    }
+  }
   EssayAI.fetchConfig().then(function (cfg) {
     serverCfg = cfg;
-    refreshHint();
-    tabSms.hidden = !(cfg.auth && cfg.auth.smsEnabled);
   });
   EssayAuth.refreshMe().then(function (res) {
-    if (res.user) restoreCloudDraft(false); // 已登录且本机表单为空：静默恢复云端草稿
+    if (res.user) restoreCloudDraft(false); // 已登录：云端草稿与本地一致则静默，不同才询问
   });
 })();

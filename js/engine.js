@@ -75,18 +75,18 @@
     }
     var title = (opts.title || '').trim() || (titleLine ? paragraphs[0] : '');
 
-    var summary = 'AI 本次未返回完整的批改结果，当前分数是系统按【考场字数规定与成篇保底规则】给出的临时分数（' +
-      band.label + band.sub + '），不含任何评语与诊断。请重新点击批改获取完整 AI 报告。';
+    var summary = '本次未返回完整的批改结果，当前分数是系统按【考场字数规定与成篇保底规则】给出的临时分数（' +
+      band.label + band.sub + '），不含任何评语与诊断。请重新点击批改获取完整报告。';
 
     return {
       total: score,
       band: band,
       summary: summary,
-      // AI 未返回审题结论时不做机械判定
+      // 未返回审题结论时不做机械判定
       deviation: {
         status: 'none',
         label: '审题未核查',
-        detail: 'AI 本次未返回审题核查结果，请重新批改。'
+        detail: '本次未返回审题核查结果，请重新批改。'
       },
       dims: [],
       stats: { chars: chars, target: opts.target || 800, paragraphs: pn },

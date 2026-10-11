@@ -1,10 +1,10 @@
-﻿﻿﻿﻿<!DOCTYPE html>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split30" />
+<link rel="stylesheet" href="styles.css?v=split33" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -15,11 +15,10 @@
       <span class="brand-logo">📝</span>
       <div>
         <h1>高考思辨议论文批改</h1>
-        <p>上海卷 70 分五类档 · AI 审题指导 · 逐句批注</p>
+        <p>上海卷 70 分五类档 · 审题指导 · 逐句批注</p>
       </div>
     </div>
     <div class="header-right">
-      <span class="mode-badge mode-ai" id="mode-badge">🤖 AI 模式</span>
       <button type="button" class="btn-history" id="btn-history" hidden>📂 历史记录</button>
       <div class="user-area" id="user-area"></div>
     </div>
@@ -54,7 +53,7 @@
         <select id="exam-prompt-select" class="exam-select">
           <option value="">— 选择 2025 上海高三一模真题练习 —</option>
         </select>
-        <button type="button" class="btn btn-analyze" id="btn-analyze">🔍 AI 审题指导</button>
+        <button type="button" class="btn btn-analyze" id="btn-analyze">🔍 审题指导</button>
       </div>
       <div class="field">
         <textarea id="essay-prompt" rows="4"
@@ -68,14 +67,6 @@
 
     <div class="card">
       <h2 class="card-title"><span class="title-bar"></span>提交你的作文</h2>
-
-      <div class="mode-switch" role="tablist">
-        <button type="button" class="mode-opt active" id="mode-ai" data-mode="ai">
-          <b>🤖 AI 智能批改</b>
-          <span>大模型通读全文、整体评判，建议更具体</span>
-        </button>
-      </div>
-      <p class="ai-hint" id="ai-hint"></p>
 
       <div class="form-row">
         <div class="field field-title">
@@ -111,7 +102,7 @@
           <div class="uz-icon">📄</div>
           <div class="uz-main">
             <b id="upload-title">点击上传作文文件，或将文件拖到这里</b>
-            <span id="upload-sub">支持 Word（.docx）、PDF、TXT、作文照片（自动 OCR）· 文件含题目时会自动拆到上方，标题保留在正文首行 · 照片识别首次需下载约 2MB 中文模型（已自动选最快线路）</span>
+            <span id="upload-sub">支持 Word（.docx）、PDF、TXT、作文照片（自动 OCR）· 文件含题目时会自动拆到上方，标题保留在正文首行 · 照片识别首次需下载约 2MB 中文模型</span>
           </div>
           <span class="uz-btn" id="upload-btn">选择文件</span>
           <input type="file" id="essay-file" hidden
@@ -127,12 +118,11 @@
         </div>
 
         <textarea id="essay-text" rows="14"
-          placeholder="在这里粘贴或输入你的作文（不少于 800 字）……&#10;系统按上海卷五类档整体赋分，从审题立意、论证层次、论据分析、语言表达四个维度诊断，标出概念界定、让步转折、以例代证、错别字病句等批注。"></textarea>
+          placeholder="在这里粘贴或输入你的作文（不少于 800 字）……&#10;系统按上海卷五类档整体赋分，从审题立意、论证层次、论据分析、语言表达四个维度诊断，标出概念界定、让步转折、以例代证等批注。"></textarea>
         <div class="text-bar">
           <span class="char-count"><b id="char-count">0</b> 字（含标点占格，高考要求不少于 800 字）</span>
           <span class="sample-hint">没有作文？试试 →
             <button type="button" class="link-btn" id="load-sample-1">60 分范文</button>
-            <button type="button" class="link-btn" id="load-sample-2">跑题反例</button>
           </span>
         </div>
       </div>
@@ -160,8 +150,8 @@
       <ul class="grade-steps" id="grade-steps">
         <li><i class="gs-icon">◌</i>通读全文，梳理脉络</li>
         <li><i class="gs-icon">◌</i>核查字数与段落结构</li>
-        <li><i class="gs-icon">◌</i>推敲字词、标点与语句</li>
         <li><i class="gs-icon">◌</i>评估立意、语言与文采</li>
+        <li><i class="gs-icon">◌</i>审视论证链条与思辨层次</li>
         <li><i class="gs-icon">◌</i>生成总分与修改建议</li>
       </ul>
 
@@ -170,11 +160,11 @@
       </div>
 
       <div class="grade-error" id="grade-error" hidden>
-        <p class="ge-title" id="ge-title">AI 批改失败</p>
+        <p class="ge-title" id="ge-title">批改失败</p>
         <p class="ge-detail" id="ge-detail"></p>
         <div class="ge-actions">
           <button type="button" class="btn btn-ghost" id="ge-back">返回修改</button>
-          <button type="button" class="btn btn-primary" id="ge-retry-ai">重试 AI 批改</button>
+          <button type="button" class="btn btn-primary" id="ge-retry-ai">重新批改</button>
         </div>
       </div>
     </div>
@@ -197,7 +187,6 @@
         <div class="report-title-row">
           <h2 id="report-title">作文批改报告</h2>
           <span class="grade-badge" id="grade-badge">二类卷</span>
-          <span class="engine-badge" id="engine-badge">AI 批改</span>
         </div>
         <p class="report-summary" id="report-summary"></p>
       </div>
@@ -362,10 +351,10 @@
 </div>
 
 <footer class="site-footer">
-  <p id="footer-note">评分以 AI 大模型通读全文后的整体评判为准（上海卷五类档整体赋分，满分 70 分），聚焦审题、思辨深度与论证质量，不考核错别字、标点等字词细节。AI 批改由网站统一配置的大模型提供，作文内容仅在批改时经服务器转发至大模型接口，不作他用。</p>
+  <p id="footer-note">评分按上海卷五类档整体赋分（满分 70 分），聚焦审题、思辨深度与论证质量，不考核错别字、标点等字词细节。作文内容仅用于本次批改，不作任何其他用途。</p>
 </footer>
 
-<!-- 登录 / 注册弹窗 -->
+<!-- 登录弹窗 -->
 <div class="modal-mask" id="auth-modal" hidden>
   <div class="modal modal-auth">
     <div class="modal-head">
@@ -373,42 +362,20 @@
       <button type="button" class="modal-close" id="auth-close" title="关闭">×</button>
     </div>
     <div class="modal-body">
-      <div class="auth-tabs" role="tablist">
-        <button type="button" class="auth-tab active" id="auth-tab-login" data-tab="login">账号登录</button>
-        <button type="button" class="auth-tab" id="auth-tab-sms" data-tab="sms">手机验证码</button>
-        <button type="button" class="auth-tab" id="auth-tab-register" data-tab="register">注册</button>
-      </div>
       <div class="field" id="auth-login-field">
         <label for="auth-login">账号</label>
         <input type="text" id="auth-login" maxlength="20" autocomplete="username"
-          placeholder="3-20 位，中英文 / 数字 / 下划线 / 连字符" />
-        <p class="field-hint" id="auth-login-hint">可用习惯的用户名；没有账号请切到“注册”或“手机验证码”登录（首次验证即自动注册）。</p>
+          placeholder="输入发放的账号" />
+        <p class="field-hint" id="auth-login-hint">请输入发放给您的账号与密码；无法登录或有其他问题请联系管理员。</p>
       </div>
       <div class="field" id="auth-pw-field">
         <label for="auth-pw">密码</label>
-        <input type="password" id="auth-pw" maxlength="72" autocomplete="current-password" placeholder="6-72 位" />
-      </div>
-      <div class="field" id="auth-pw2-field" hidden>
-        <label for="auth-pw2">确认密码</label>
-        <input type="password" id="auth-pw2" maxlength="72" autocomplete="new-password" placeholder="再输入一次密码" />
-      </div>
-      <div class="field" id="auth-phone-field" hidden>
-        <label for="auth-phone">手机号</label>
-        <input type="tel" id="auth-phone" maxlength="11" inputmode="numeric" autocomplete="tel"
-          placeholder="输入 11 位手机号" />
-      </div>
-      <div class="field" id="auth-code-field" hidden>
-        <label for="auth-code">短信验证码</label>
-        <div class="auth-sms-row">
-          <input type="text" id="auth-code" maxlength="6" inputmode="numeric"
-            autocomplete="one-time-code" placeholder="6 位验证码" />
-          <button type="button" class="btn-sms" id="auth-send">获取验证码</button>
-        </div>
+        <input type="password" id="auth-pw" maxlength="72" autocomplete="current-password" placeholder="输入密码" />
       </div>
       <p class="modal-tip" id="auth-msg"></p>
     </div>
     <div class="modal-foot auth-foot">
-      <span class="auth-secure-note">🔒 密码加盐哈希加密存储</span>
+      <span class="auth-secure-note">🔒 密码加密存储，保障账号安全</span>
       <button type="button" class="btn btn-primary" id="auth-submit">登录</button>
     </div>
   </div>
@@ -432,11 +399,11 @@
 <!-- 轻提示 -->
 <div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
 
-<script src="js/file-upload.js?v=split30"></script>
-<script src="js/engine.js?v=split30"></script>
-<script src="js/ai-client.js?v=split30"></script>
-<script src="js/auth.js?v=split30"></script>
-<script src="js/app.js?v=split30"></script>
+<script src="js/file-upload.js?v=split33"></script>
+<script src="js/engine.js?v=split33"></script>
+<script src="js/ai-client.js?v=split33"></script>
+<script src="js/auth.js?v=split33"></script>
+<script src="js/app.js?v=split33"></script>
 </body>
 </html>
 

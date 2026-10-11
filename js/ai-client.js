@@ -461,7 +461,7 @@
         dStatus = /偏题|跑题|偷换|套题|脱离/.test(negated) ? 'bad'
           : (/明扣暗离|瑕疵|片面|未回应|忽略|没有回应/.test(negated) ? 'warn' : 'ok');
       }
-      var dLabel = dStatus === 'bad' ? 'AI 判断：有偏题风险' : dStatus === 'warn' ? 'AI 判断：审题有瑕疵' : 'AI 判断：审题契合';
+      var dLabel = dStatus === 'bad' ? '有偏题风险' : dStatus === 'warn' ? '审题有瑕疵' : '审题契合';
       deviation = { status: dStatus, label: dLabel, detail: dTxt };
     } else {
       deviation = local.deviation;
@@ -470,7 +470,7 @@
     // AI 结果残缺（无总分也无档位）时走保底分，总评明确标注是临时保底分
     var aiIntact = !(Math.round(num(ai.total, -1)) < 0 && !ai.bandClass);
     var fallbackSummary = aiIntact
-      ? '本次批改由 AI 大模型按上海卷五类档标准完成，请结合批注与建议修改作文。'
+      ? '本次批改按上海卷五类档标准完成，请结合批注与建议修改作文。'
       : local.summary;
 
     return {

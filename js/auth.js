@@ -1,8 +1,8 @@
 /* ============================================================
- * 账号客户端：注册 / 登录 / 退出 / 当前会话 / 手机验证码登录
+ * 账号客户端：登录 / 退出 / 当前会话
  *  - 会话由服务端 HttpOnly Cookie 维持，JS 读不到令牌本身
  *  - 云端历史报告、作文草稿、每日配额查询
- * 上海高考思辨议论文批改 · split26
+ * 上海高考思辨议论文批改 · split33
  * ============================================================ */
 (function (global) {
   'use strict';
@@ -56,12 +56,6 @@
       .then(function (d) { setMe(d); return d; });
   }
 
-  function register(loginName, password, displayName) {
-    return request('POST', '/api/auth/register',
-      { login: loginName, password: password, displayName: displayName || '' })
-      .then(function (d) { setMe(d); return d; });
-  }
-
   function logout() {
     return request('POST', '/api/auth/logout', {}).then(function () {
       setMe({ user: null });
@@ -70,15 +64,15 @@
     });
   }
 
-  /* ---------------- 手机验证码 ---------------- */
+  /* ---------------- 会话缓存（刷新时先即时显示） ---------------- */
 
-  function sendSmsCode(phone) {
-    return request('POST', '/api/auth/sms/send', { phone: phone });
-  }
-
-  function loginSms(phone, code) {
-    return request('POST', '/api/auth/sms/login', { phone: phone, code: code })
-      .then(function (d) { setMe(d); return d; });
+  // 用浏览器本地缓存的上次会话信息即时填充（刷新页面时先显示已登录，
+  // 再由 refreshMe() 与服务端核对；服务端确认已退出则立即改回未登录）
+  function hydrate(cached) {
+    if (cached && cached.user) {
+      me = cached;
+      emitChange();
+    }
   }
 
   function user() { return me && me.user ? me.user : null; }
@@ -87,8 +81,6 @@
   function onChange(fn) {
     changeListeners.push(fn);
   }
-
-  /* ---------------- 历史报告 ---------------- */
 
   function listEssays() {
     return request('GET', '/api/essays').then(function (d) { return d.essays || []; });
@@ -123,12 +115,10 @@
   }
 
   global.EssayAuth = {
+    hydrate: hydrate,
     refreshMe: refreshMe,
     login: login,
-    register: register,
     logout: logout,
-    sendSmsCode: sendSmsCode,
-    loginSms: loginSms,
     user: user,
     quota: quota,
     onChange: onChange,

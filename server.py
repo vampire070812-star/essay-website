@@ -263,6 +263,24 @@ def db_get_user_by_login(login):
         return db.execute("SELECT * FROM users WHERE login=?", (login,)).fetchone()
 
 
+def db_upsert_user(login, pw, display_name):
+    """账号存在则重置密码，不存在则创建（用于启动时播种试运行账号）。返回 ('created'|'updated')。"""
+    now = int(time.time())
+    with db_lock:
+        row = db.execute("SELECT id FROM users WHERE login=?", (login,)).fetchone()
+        if row:
+            db.execute("UPDATE users SET pw_hash=? WHERE id=?",
+                       (hash_password(pw), row["id"]))
+            action = "updated"
+        else:
+            db.execute(
+                "INSERT INTO users(login, display_name, pw_hash, created_at) VALUES(?,?,?,?)",
+                (login, display_name, hash_password(pw), now))
+            action = "created"
+        db.commit()
+        return action
+
+
 def db_get_user_by_phone(phone):
     with db_lock:
         return db.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
@@ -1567,6 +1585,15 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- 注册 / 登录 / 退出 ----------------
 
     def handle_auth(self, path, data):
+        # 试运行模式：不开放注册与手机验证码登录，仅允许发放的账号密码登录
+        if path == "/api/auth/register":
+            self._api_error("register_disabled",
+                            "注册暂未开放，请使用发放的账号登录。", 403)
+            return
+        if path in ("/api/auth/sms/send", "/api/auth/sms/login"):
+            self._api_error("sms_disabled",
+                            "手机验证码登录暂未开放，请使用发放的账号登录。", 403)
+            return
         if path == "/api/auth/sms/send":
             self.handle_sms_send(data)
             return
@@ -1962,8 +1989,38 @@ def lan_ip():
     return ip
 
 
+def seed_trial_accounts():
+    """启动时播种试运行账号（Render 等云平台磁盘随部署清空，账号需每次启动重建）。
+
+    环境变量 TRIAL_ACCOUNTS 格式：逗号/分号/换行分隔的 "账号:密码" 对，例如
+        user001:Abc12345,user002:Xyz98765
+    返回 (新建数, 更新数)。
+    """
+    raw = os.environ.get("TRIAL_ACCOUNTS", "").strip()
+    if not raw:
+        return 0, 0
+    created = updated = 0
+    for item in re.split(r"[,;\s]+", raw):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        login, pw = item.split(":", 1)
+        login, pw = login.strip(), pw.strip()
+        if not LOGIN_RE.match(login) or not (6 <= len(pw) <= 72):
+            continue
+        action = db_upsert_user(login, pw, login)
+        if action == "created":
+            created += 1
+        else:
+            updated += 1
+    return created, updated
+
+
 def main():
     init_db()
+    seeded_new, seeded_upd = seed_trial_accounts()
+    if seeded_new or seeded_upd:
+        print(" 试运行账号已就绪：新建 %d 个，重置 %d 个" % (seeded_new, seeded_upd))
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     local_ip = lan_ip()
     on_cloud = bool(os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
