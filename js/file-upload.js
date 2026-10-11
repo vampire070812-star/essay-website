@@ -412,12 +412,11 @@
     return serverCfgPromise;
   }
 
-  // 服务端视觉模型识别手写文字：成功返回文本；任何失败由调用方回退本地识别
+  // 服务端视觉模型识别手写文字：成功返回文本；失败抛出带 code 的错误
   function serverOcr(dataUrl, report) {
     var ctrl = null;
     try { ctrl = new AbortController(); } catch (e) {}
     var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e) {} }, 90000);
-    report({ status: '正在识别手写文字…', ratio: 0.3 });
     return fetch('/api/ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -427,14 +426,179 @@
     }).then(function (r) {
       return r.json().then(function (j) {
         clearTimeout(timer);
-        if (!j || !j.ok) {
-          var err = new Error((j && j.message) || '服务端识别失败');
+        if (!r.ok || !j || !j.ok) {
+          var err = new Error((j && j.message) || '服务端识别失败（HTTP ' + r.status + '）');
           err.code = j && j.code;
+          err.status = r.status;
           throw err;
         }
         return String(j.text || '');
       });
-    }, function (e) { clearTimeout(timer); throw e; });
+    }, function (e) {
+      clearTimeout(timer);
+      if (e && e.name === 'AbortError') throw new Error('识别请求超时，请重试。');
+      throw e;
+    });
+  }
+
+  /* ---------- 整页切条并行识别（提高手写识别准确率的关键） ----------
+   * 手机拍的整页作文有 15~25 行，整页一次送视觉模型时单字有效分辨率不足，
+   * 容易漏行、串行。把图按高度切成 2~3 条并行送给视觉模型，每个字的有效
+   * 分辨率成倍提高；并行执行不增加总耗时。
+   * 切缝优先落在文字行之间的空白带（按行内暗像素数检测），保证不切断文
+   * 字、也不会产生重复；找不到空白带的边界退回重叠切法，由
+   * joinStripTexts 去重兜底。 */
+  function findBlankRow(canvas, yCenter, win) {
+    var w = canvas.width, h = canvas.height;
+    var y0 = Math.max(0, yCenter - win);
+    var hh = Math.min(h, yCenter + win + 1) - y0;
+    if (hh <= 0) return { y: yCenter, t: yCenter, dark: 1e9 };
+    var ctx = canvas.getContext('2d');
+    var px = ctx.getImageData(0, y0, w, hh).data;
+    var bestR = 0, bestC = 1e9;
+    var step = Math.max(1, Math.floor(w / 600)); // 大图横向抽样省时
+    for (var r = 0; r < hh; r++) {
+      var c = 0;
+      for (var x = 0; x < w; x += step) {
+        var i = (r * w + x) * 4;
+        var g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        if (g < 150) c++; // 深色笔画；淡红格线灰度约 210 不计入
+      }
+      if (c < bestC) { bestC = c; bestR = r; }
+    }
+    return { y: y0 + bestR, t: yCenter, dark: bestC };
+  }
+
+  function splitStrips(dataUrl, n) {
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          if (n <= 1) { resolve([dataUrl]); return; }
+          var w = img.naturalWidth, h = img.naturalHeight;
+          var base = document.createElement('canvas');
+          base.width = w; base.height = h;
+          var bctx = base.getContext('2d');
+          bctx.fillStyle = '#fff';
+          bctx.fillRect(0, 0, w, h);
+          bctx.drawImage(img, 0, 0);
+
+          var ov = Math.max(40, Math.round(h / n * 0.15)); // 兜底重叠高度
+          var pad = 14;                                    // 上下留白防贴边漏字
+          var win = Math.max(24, Math.round(h / n * 0.08)); // 空白带搜索半径
+          var cleanMax = Math.max(6, Math.round(w * 0.004)); // 视为空白带的暗像素上限
+
+          var cuts = [];
+          for (var c = 1; c < n; c++) cuts.push(findBlankRow(base, Math.round(h * c / n), win));
+
+          var strips = [];
+          for (var i = 0; i < n; i++) {
+            var y0, y1;
+            if (i === 0) y0 = 0;
+            else y0 = cuts[i - 1].dark <= cleanMax ? cuts[i - 1].y : Math.max(0, cuts[i - 1].t - (ov >> 1));
+            if (i === n - 1) y1 = h;
+            else y1 = cuts[i].dark <= cleanMax ? cuts[i].y : Math.min(h, cuts[i].t + (ov >> 1));
+            var ch = y1 - y0;
+            if (ch < 40) continue;
+            var cc = document.createElement('canvas');
+            cc.width = w; cc.height = ch + pad * 2;
+            var ctx = cc.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, cc.width, cc.height);
+            ctx.drawImage(base, 0, y0, w, ch, 0, pad, w, ch);
+            strips.push(cc.toDataURL('image/jpeg', 0.9));
+          }
+          resolve(strips.length ? strips : [dataUrl]);
+        } catch (e) { resolve([dataUrl]); }
+      };
+      img.onerror = function () { resolve([dataUrl]); }; // 解码失败就整页单条识别
+      img.src = dataUrl;
+    });
+  }
+
+  // 条数：竖版长图切更多条（作文照片典型比例 3:4 ~ 9:16）
+  function stripCountFor(w, h) {
+    var r = h / Math.max(1, w);
+    if (r >= 1.9) return 3;
+    if (r >= 1.2) return 2;
+    return 1;
+  }
+
+  // 拼接各条转写结果：相邻条重叠区会重复转写，按行文本去重（去空白后比对）
+  function joinStripTexts(parts) {
+    var norm = function (s) { return String(s).replace(/[\s\u3000]+/g, ''); };
+    var all = null;
+    parts.forEach(function (p) {
+      var lines = String(p || '').replace(/\r/g, '').split('\n');
+      while (lines.length && !lines[0].trim()) lines.shift();
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      if (!lines.length) return;
+      if (all && all.length) {
+        // 1) 尾部锚定：重叠区通常正好落在上一条结尾
+        var maxK = Math.min(6, all.length, lines.length), k = 0;
+        for (var cand = maxK; cand >= 1; cand--) {
+          var tail = norm(all.slice(-cand).join(''));
+          if (tail && tail === norm(lines.slice(0, cand).join(''))) { k = cand; break; }
+        }
+        // 2) 全文包含：上一条已完整覆盖本条开头的重复行（不止结尾的情形）
+        if (!k) {
+          var joinedN = norm(all.join(''));
+          for (var cand2 = Math.min(6, lines.length); cand2 >= 2; cand2--) {
+            var head = norm(lines.slice(0, cand2).join(''));
+            if (head && joinedN.indexOf(head) >= 0) { k = cand2; break; }
+          }
+        }
+        // 3) 字符级后缀-前缀：容忍模型把两行并作一行/漏行的情形，
+        //    在归一化字符流上找 A 尾部与 B 头部的最长公共块（≥10 字）
+        if (!k) {
+          var aN = norm(all.join(''));
+          var bNLines = lines.map(norm);
+          var bCum = [0];
+          bNLines.forEach(function (t, bi) { bCum.push(bCum[bi] + t.length); });
+          var bN = bNLines.join('');
+          var maxL = Math.min(aN.length, bN.length, 240);
+          var best = 0;
+          for (var L = maxL; L >= 10; L--) {
+            if (aN.slice(aN.length - L) === bN.slice(0, L)) { best = L; break; }
+          }
+          if (best) {
+            // 找到跨界所在行：前面整行删掉，边界行截去已匹配的前缀
+            for (var m = 0; m < lines.length; m++) {
+              if (bCum[m + 1] >= best) {
+                var cutLine = cutLinePrefix(lines[m], best - bCum[m]);
+                lines = lines.slice(m + 1);
+                if (cutLine.trim()) lines.unshift(cutLine);
+                k = -1;
+                break;
+              }
+            }
+          }
+        }
+        if (k > 0) lines = lines.slice(k);
+      }
+      all = (all || []).concat(lines);
+    });
+    return (all || []).join('\n');
+  }
+
+  // 从行首截去已在前一条中出现的前缀（cnt 为去空白后的字符数），返回剩余部分
+  function cutLinePrefix(line, cnt) {
+    var out = '', seen = 0, started = false;
+    var s = String(line || '');
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      var isWs = /[\s\u3000]/.test(ch);
+      if (!started) {
+        if (isWs) continue; // 跳过行首缩进
+        started = true;
+      }
+      if (seen < cnt) {
+        if (!isWs) seen++;
+        continue;
+      }
+      out += ch;
+    }
+    return out;
   }
 
   /* ---------- 本地 tesseract 通道（worker 复用 + 增强预处理） ---------- */
@@ -508,23 +672,64 @@
     });
   }
 
-  /* ---------- 图片识别主流程：服务端视觉模型优先，失败回退本地识别 ---------- */
+  /* ---------- 图片识别主流程 ----------
+   * 服务端视觉模型优先（切条并行，准确率高）；仅当服务端未配置识别
+   * 功能时才回退浏览器本地识别。服务端已配置但识别失败时给出明确
+   * 提示并终止——绝不静默回退到本地识别输出大片乱码误导用户。 */
   function parseImage(file, report) {
     return getServerCfg().then(function (cfg) {
-      if (!cfg || !cfg.ocr || !cfg.ocr.enabled) return null;
+      if (!cfg || !cfg.ocr || !cfg.ocr.enabled) return null; // 未配置 → 本地兜底
       report({ status: '正在压缩照片…', ratio: 0.08 });
-      return preprocessImage(file, { longEdge: 1800 }).then(function (prep) {
-        return serverOcr(prep.dataUrl, report);
+      return preprocessImage(file, { longEdge: 2600 }).then(function (prep) {
+        var n = stripCountFor(prep.width, prep.height);
+        report({ status: '正在识别手写文字…', ratio: 0.25 });
+        return splitStrips(prep.dataUrl, n).then(function (strips) {
+          var done = 0;
+          function mark() {
+            done++;
+            report({
+              status: '正在识别手写文字（' + done + ' / ' + strips.length + ' 段）…',
+              ratio: 0.25 + 0.6 * done / strips.length
+            });
+          }
+          // 350ms 间隔错峰启动，避免瞬时并发触发限流
+          var jobs = strips.map(function (s, i) {
+            return new Promise(function (resolve) {
+              setTimeout(function () {
+                serverOcr(s, report).then(function (t) { mark(); resolve(t); },
+                                         function (e) { mark(); resolve({ __err: e }); });
+              }, i * 350);
+            });
+          });
+          return Promise.all(jobs).then(function (outs) {
+            var firstErr = null;
+            var parts = outs.map(function (o) {
+              if (o && o.__err) { if (!firstErr) firstErr = o.__err; return ''; }
+              return o;
+            });
+            if (firstErr) throw firstErr;
+            var merged = normalizeText(joinStripTexts(parts));
+            if (!merged) {
+              var e2 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
+              e2.handled = true;
+              throw e2;
+            }
+            return merged;
+          });
+        });
       }).then(function (text) {
-        text = normalizeText(text);
-        if (!text) throw new Error('empty');
-        return text;
-      }).then(function (text) { return text; }, function () { return null; });
-    }).then(function (visionText) {
-      if (visionText) {
-        report({ status: '识别完成，请在正文框中核对错别字', ratio: 1 });
-        return { text: visionText, kind: 'image', titleGuess: guessTitle(visionText), ocr: true };
-      }
+        report({ status: '识别完成，请在正文框中核对', ratio: 1 });
+        return { text: text, kind: 'image', titleGuess: guessTitle(text), ocr: true, engine: 'vision' };
+      }, function (e) {
+        if (e && (e.code === 'login_required' || e.status === 401)) {
+          throw new Error('拍照识别需要先登录：请点右上角「登录」后再上传照片。');
+        }
+        if (e && (e.code === 'quota_exceeded' || e.code === 'ocr_disabled' || e.handled)) throw e;
+        throw new Error((e && e.message ? e.message : '照片识别失败') +
+          '。可重试一次；也可直接把文字粘贴到正文框。');
+      });
+    }).then(function (visionRes) {
+      if (visionRes) return visionRes;
       return tessParseImage(file, report);
     });
   }
