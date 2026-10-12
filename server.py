@@ -129,21 +129,27 @@ PROOFREAD_MAX_TEXT = 6000
 PROOFREAD_SYSTEM_PROMPT = (
     "你是中文手写作文的 OCR 校对员。用户会给你一段手写作文照片的机器转写文本，"
     "其中可能有少量因手写字形相近、拍照模糊造成的识别错字。"
+    "你的唯一目的：找出因手写识别认错字导致的错误，帮助用户快速改回原本写的字。"
+    "绝对不是帮用户修改作文——只有“识别会产生的错误”才报，作文本身写得如何与你无关。\n"
     "请分两档找出错字，输出 JSON："
     "{\"items\":[{\"quote\":\"原文片段\",\"original\":\"错词\",\"suggest\":\"建议改为\",\"level\":\"high 或 low\"}]}。\n"
-    "第一档 level=\"high\"（确定的错字）：你确定原文此处是识别错误——原词在中文里不成词、"
-    "或在此语境语义不通，而替换成一个形近或音近的常见词后句意立刻通顺"
-    "（例如：软伴→软件、限多→限制、内客→内容、机戒→机械、出板→出版）。最多 12 处。\n"
-    "第二档 level=\"low\"（较有把握的错字）：你有较大把握是识别错误、但不如第一档那么确定的词。"
-    "手写作文识别出错很正常，不必刻意少报：凡是能有把握确实是错的都可以列出，"
-    "用户会自行决定改或不改；同样必须满足替换一个形近/音近字后更通顺，"
-    "suggest 给出你认为最可能的正确词。但为避免打扰用户，整体不要超过 15 处。\n"
+    "第一档 level=\"high\"（确定的识别错字）：你确定原文此处是识别错误——原词在中文里不成词、"
+    "或在此语境语义不通，而把它换成一个【字形或读音相近】的词后句意立刻通顺，"
+    "即用户手写时写的几乎肯定是后者（例如：伴件→软件、软伴→软件、限多→限制、"
+    "内客→内容、机戒→机械、出板→出版）。最多 12 处。\n"
+    "第二档 level=\"low\"（疑似识别错误）：你觉得有可能是识别认错字，但把握不如第一档大的词。"
+    "手写作文识别出错很正常，不必刻意少报：凡是有把握确实是识别错的都可以列出，"
+    "用户会自行决定改或不改；同样必须满足【换成形近/音近字后更通顺】，"
+    "suggest 给出你认为用户原本最可能写的字词。但为避免打扰用户，整体不要超过 15 处。\n"
     "两档共同要求：\n"
-    "1. 只报形近/音近字级别的识别错误：不挑作者自己写的错别字、语病、标点问题、用词好坏，"
-    "不做润色建议；不报告人名、地名、专有名词、文言表达和创意化用词；\n"
-    "2. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
+    "1. suggest 必须与 original 字形相近或读音相近（手写识别只会在形近/音近字上出错）。"
+    "严禁把文中词语换成意思不同、字形不相似的词——例如绝不能把「齿轮」改成「螺丝」、"
+    "把「宿命」改成「命运」：那不是识别错误，是在改写用户的作文，违背本功能的初衷；\n"
+    "2. 只报识别错字：不挑作者自己写的错别字、语病、标点问题、用词好坏，不做润色建议；"
+    "不报告人名、地名、专有名词、文言表达和创意化用词；\n"
+    "3. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
     "且要保证 quote 在全文中只出现一次；original 是其中的错词；\n"
-    "3. original 与 suggest 各不超过 4 个字且必须不同；按在文中出现的先后顺序。\n"
+    "4. original 与 suggest 各不超过 4 个字且必须不同；按在文中出现的先后顺序。\n"
     "只输出 JSON，不要输出任何其他内容。"
 )
 
@@ -1447,12 +1453,12 @@ def sanitize_ocr_text(raw):
     return text, dropped
 
 
-def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens):
+def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens, temperature=0.3):
     """调用 OpenAI 兼容 chat/completions。返回报告 dict；失败抛 LLMError。"""
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
-        "temperature": 0.3,
+        "temperature": temperature,
         "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -2150,7 +2156,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             rep = call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
                            PROOFREAD_SYSTEM_PROMPT,
-                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200)
+                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200, temperature=0)
         except LLMError as e:
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
@@ -2169,6 +2175,16 @@ class Handler(BaseHTTPRequestHandler):
                 # 硬校验：长度合理、quote 必须是原文连续子串且在全文中唯一、original 在 quote 内、
                 # 建议词确实与原词不同
                 if not (1 <= len(original) <= 8 and 1 <= len(suggest) <= 8 and original != suggest):
+                    continue
+                # 形近字硬校验：OCR 错字是"同长度换字"——长度必须一致、差异字不超过 2 个，
+                # 且两字词以上必须与原词共享至少一个字（形近字对几乎总共享部件/整字；
+                # 宿命→命运、齿轮→螺丝这类语义替换必然过不了此关；单字换单字无法共享字，放行靠 prompt 约束）
+                if len(original) != len(suggest):
+                    continue
+                ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
+                if ndiff == 0 or ndiff > 2:
+                    continue
+                if len(original) >= 2 and not (set(original) & set(suggest)):
                     continue
                 if not quote or len(quote) > 40 or original not in quote:
                     continue
