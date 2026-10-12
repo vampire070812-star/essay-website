@@ -503,6 +503,71 @@
     return { y: y0 + bestR, t: yCenter, dark: bestC };
   }
 
+  // 竖向空白带检测：横版双页稿纸（两栏拍在一张横图里）的左右分页依据。
+  // 跳过顶部 25%（可能有通栏题目/批注横跨中缝），在下方区域按列统计暗像素。
+  function findBlankCol(canvas, xCenter, win) {
+    var w = canvas.width, h = canvas.height;
+    var x0 = Math.max(0, xCenter - win);
+    var ww = Math.min(w, xCenter + win + 1) - x0;
+    if (ww <= 0) return { x: xCenter, dark: 1e9 };
+    var yStart = Math.round(h * 0.25);
+    var hh = h - yStart;
+    if (hh <= 0) return { x: xCenter, dark: 1e9 };
+    var ctx = canvas.getContext('2d');
+    var px = ctx.getImageData(0, yStart, w, hh).data;
+    var bestX = 0, bestC = 1e9;
+    var step = Math.max(1, Math.floor(hh / 600));
+    for (var c = 0; c < ww; c++) {
+      var cnt = 0, x = x0 + c;
+      for (var r = 0; r < hh; r += step) {
+        var i = (r * w + x) * 4;
+        var g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        if (g < 150) cnt++;
+      }
+      if (cnt < bestC) { bestC = cnt; bestX = c; }
+    }
+    return { x: x0 + bestX, dark: bestC };
+  }
+
+  // 横版双页分页：两栏稿纸拍在一张横图里时必须先竖向切成左右两页，
+  // 否则整图一次请求超出视觉模型输出上限（1024 tokens），后半截文字会丢失。
+  // 中缝必须足够空白且落在画面中部 28%~72% 之间，否则视为单页不动。
+  function splitPages(dataUrl, w, h) {
+    var one = [{ url: dataUrl, w: w, h: h }];
+    return new Promise(function (resolve) {
+      if (w < h * 1.05) { resolve(one); return; } // 竖版/近方形不可能是双页
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var base = document.createElement('canvas');
+          base.width = w; base.height = h;
+          var bctx = base.getContext('2d');
+          bctx.fillStyle = '#fff';
+          bctx.fillRect(0, 0, w, h);
+          bctx.drawImage(img, 0, 0);
+          var gap = findBlankCol(base, Math.round(w / 2), Math.round(w * 0.16));
+          var cleanMax = Math.max(8, Math.round(h * 0.01));
+          if (gap.dark > cleanMax || gap.x < w * 0.28 || gap.x > w * 0.72) { resolve(one); return; }
+          var pad = 14, out = [];
+          [[0, gap.x], [gap.x, w]].forEach(function (rg) {
+            var cw = rg[1] - rg[0];
+            if (cw < w * 0.2) return;
+            var cc = document.createElement('canvas');
+            cc.width = cw + pad * 2; cc.height = h + pad * 2;
+            var cctx = cc.getContext('2d');
+            cctx.fillStyle = '#fff';
+            cctx.fillRect(0, 0, cc.width, cc.height);
+            cctx.drawImage(base, rg[0], 0, cw, h, pad, pad, cw, h);
+            out.push({ url: cc.toDataURL('image/jpeg', 0.9), w: cc.width, h: cc.height });
+          });
+          resolve(out.length === 2 ? out : one);
+        } catch (e) { resolve(one); }
+      };
+      img.onerror = function () { resolve(one); };
+      img.src = dataUrl;
+    });
+  }
+
   function splitStrips(dataUrl, n) {
     return new Promise(function (resolve) {
       var img = new Image();
@@ -715,9 +780,19 @@
       if (!cfg || !cfg.ocr || !cfg.ocr.enabled) return null; // 未配置 → 本地兜底
       report({ status: '正在压缩照片…', ratio: 0.08 });
       return preprocessImage(file, { longEdge: 2600 }).then(function (prep) {
-        var n = stripCountFor(prep.width, prep.height);
         report({ status: '正在识别手写文字…', ratio: 0.25 });
-        return splitStrips(prep.dataUrl, n).then(function (strips) {
+        // 横版双页稿纸先竖向分页，每页再按高度横切条（拼接顺序：左页各条→右页各条）
+        return splitPages(prep.dataUrl, prep.width, prep.height).then(function (pages) {
+          var chain = Promise.resolve([]);
+          pages.forEach(function (pg) {
+            chain = chain.then(function (acc) {
+              return splitStrips(pg.url, stripCountFor(pg.w, pg.h)).then(function (ss) {
+                return acc.concat(ss);
+              });
+            });
+          });
+          return chain;
+        }).then(function (strips) {
           var done = 0;
           function mark() {
             done++;

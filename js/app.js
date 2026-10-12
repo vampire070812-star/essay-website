@@ -547,7 +547,7 @@
         openAuth('login', err.message || '审题指导需要先登录。');
         return;
       }
-      analyzeHint.textContent = '审题请求失败：' + (err.message || '未知错误') + '（本地服务需保持运行）';
+      analyzeHint.textContent = '审题请求失败：' + (err.message || '未知错误') + '（若长时间未访问，免费服务器可能正在休眠唤醒，请等约 1 分钟后重试一次）';
       analyzeHint.className = 'analyze-hint error';
     }).then(function () {
       analyzeBtn.disabled = false;
