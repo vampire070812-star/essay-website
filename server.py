@@ -108,18 +108,22 @@ OCR_TIMEOUT = 120               # 视觉模型超时（秒）
 OCR_MAX_BODY = 8 * 1024 * 1024  # /api/ocr 请求体上限（base64 图片）
 
 OCR_SYSTEM_PROMPT = (
-    "你是中文手写作文的文字转写员。请把图片中的内容逐字转写为文本："
-    "1) 严格按原文转写，不改正错别字、不润色、不增删内容、不点评；"
-    "2) 一行一行地从上到下转写，不要遗漏任何一行；"
+    "你是一台只会照抄的文字复印机，把图片上确实存在的字逐字转写为文本，"
+    "不是作家、不是答题者、不是内容助手："
+    "1) 只能输出图片上真的写着的字，严禁根据关键词、常识、名著知识、作文模板"
+    "补全、续写、扩写、脑补任何内容。即使你认出了书名、人名、话题，也绝不允许"
+    "介绍相关背景或顺着往下写——图片上没有的字，一个都不许出现；"
+    "2) 严格按原文转写，不改正错别字、不润色、不增删内容、不点评；"
+    "3) 一行一行地从上到下转写，不要遗漏任何一行；看不清的单个字画「□」，"
+    "整行看不清就输出一行「□」，严禁跳过看不清的部分后用通顺句子接上；"
     "稿纸的格线、红框、页码、眉批等标记不是文字，一律忽略；"
     "但页面上方印刷的作文题目和题目材料（通常是几行印刷体小字）是正文内容、"
     "不是眉批，必须同样逐字完整转写，并放在转写结果的最前面；"
-    "3) 保留原文的段落结构，段落之间用一个空行分隔；"
-    "4) 实在无法辨认的字用「□」代替，不要猜测生造；"
+    "4) 保留原文的段落结构，段落之间用一个空行分隔；"
     "5) 只输出转写文本本身。严禁输出任何与作文正文无关的内容，包括但不限于："
     "开场白（如“好的，以下是转写内容”）、结束语、对图片或字迹质量的评价、"
     "无法辨认的说明、请求提供更清晰图片、道歉或寒暄。即使整页都看不清，"
-    "也只输出能辨认出的文字或□，绝不作任何解释。"
+    "也只输出能辨认出的字或□，绝不作任何解释。"
 )
 
 # 识别后错字校对（OCR proofread）：优先用主 LLM（DeepSeek，响应快 3~10s），
@@ -152,19 +156,27 @@ PROOFREAD_SYSTEM_PROMPT = (
     "或在此语境语义不通，而把它换成一个【字形或读音相近】的词后句意立刻通顺，"
     "即用户手写时写的几乎肯定是后者（例如：伴件→软件、软伴→软件、限多→限制、"
     "内客→内容、机戒→机械、出板→出版）。最多 12 处。\n"
-    "第二档 level=\"low\"（疑似识别错误）：你觉得有可能是识别认错字，但把握不如第一档大的词。"
-    "手写作文识别出错很正常，不必刻意少报：凡是有把握确实是识别错的都可以列出，"
-    "用户会自行决定改或不改；同样必须满足【换成形近/音近字后更通顺】，"
-    "suggest 给出你认为用户原本最可能写的字词。但为避免打扰用户，整体不要超过 15 处。\n"
+    "第二档 level=\"low\"（疑似识别错误，三四成把握就报）：手写连笔、拍照模糊时认错字"
+    "非常普遍。只要你觉得“这个词读着有点怪，换成另一个【字形或读音沾边】的词会更通顺”，"
+    "哪怕只有三四成把握、哪怕不能排除它就是作者原词，也请放进这一档，由用户自行决定改不改。"
+    "常见情形包括：①形近字（部件混淆如 衤/礻、氵/冫、贝/见、日/曰、末/未、土/士、厂/广、"
+    "己/已、人/入，以及整体字形相近的单字或双字词，即使两个字都不一样也可以报蓝）；"
+    "②读音相同或相近的字；③多字、漏字造成的别扭（例如 机戒械→机械、子成材→孩子成材）。"
+    "这一档宁多勿漏，但为避免打扰整体不要超过 15 处；仍严禁与字形、读音都不沾边的语义替换。"
+    "不要因为怕报错而漏报：low 档本来就是供用户参考的候选，报错代价很小，漏掉则要用户自己逐字找。"
+    "请把所有“不成词或读着别扭、且存在更通顺的形近/音近/只差一个字候选”的位置全部列出来，"
+    "不要因为不确定就放弃。\n"
     "两档共同要求：\n"
-    "1. suggest 必须与 original 字形相近或读音相近（手写识别只会在形近/音近字上出错）。"
-    "严禁把文中词语换成意思不同、字形不相似的词——例如绝不能把「齿轮」改成「螺丝」、"
-    "把「宿命」改成「命运」：那不是识别错误，是在改写用户的作文，违背本功能的初衷；\n"
+    "1. 红档的 suggest 必须与 original 字形或读音明显相近；蓝档只要字形或读音沾边即可"
+    "（也允许多/漏恰好一个字的情形）。任何一档都严禁意思不同且字形读音都不沾边的替换——"
+    "例如绝不能把「齿轮」改成「螺丝」、把「宿命」改成「命运」：那不是识别错误，"
+    "是在改写用户的作文，违背本功能的初衷；\n"
     "2. 只报识别错字：不挑作者自己写的错别字、语病、标点问题、用词好坏，不做润色建议；"
     "不报告人名、地名、专有名词、文言表达和创意化用词；\n"
     "3. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
     "且要保证 quote 在全文中只出现一次；original 是其中的错词；\n"
-    "4. original 与 suggest 各不超过 4 个字且必须不同；按在文中出现的先后顺序。\n"
+    "4. original 与 suggest 各不超过 6 个字、必须不同、字数差不超过 1；按在文中出现的先后顺序。\n"
+    "如果通读全文确实没有发现任何疑似识别错误，items 返回空数组 []。\n"
     "只输出 JSON，不要输出任何其他内容。"
 )
 
@@ -1513,9 +1525,16 @@ def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens, 
     raise LLMError("unavailable", last_err or "大模型服务暂不可用")
 
 
-def call_vision_llm(api_key, base_url, model, system_prompt, data_url, max_tokens=4096):
+def is_subsequence(short, longer):
+    """short 是否能按顺序从 longer 中删去若干字得到（用于校对蓝档的多/漏字判定）。"""
+    it = iter(longer)
+    return all(ch in it for ch in short)
+
+
+def call_vision_llm(api_key, base_url, model, system_prompt, data_url, max_tokens=4096, user_hint=None):
     """调用 OpenAI 兼容视觉模型转写图片文字。返回纯文本；失败抛 LLMError。"""
     url = base_url.rstrip("/") + "/chat/completions"
+    user_text = user_hint or "请转写这张作文照片里的全部文字。"
     payload = {
         "model": model,
         "temperature": 0,
@@ -1523,7 +1542,7 @@ def call_vision_llm(api_key, base_url, model, system_prompt, data_url, max_token
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": [
-                {"type": "text", "text": "请转写这张作文照片里的全部文字。"},
+                {"type": "text", "text": user_text},
                 {"type": "image_url", "image_url": {"url": data_url}},
             ]},
         ],
@@ -2131,10 +2150,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
+        # 前端长图会横切成多段并行识别；告知模型这只是其中一段，
+        # 防止它看到不完整的上下文就脑补/续写出图片上没有的内容
+        part_index = data.get("partIndex")
+        part_total = data.get("partTotal")
+        user_hint = None
+        if isinstance(part_index, int) and isinstance(part_total, int) \
+                and 1 <= part_index <= part_total and part_total > 1:
+            user_hint = (
+                "这是一张长作文照片横向裁切出的第 %d 段（共 %d 段），"
+                "图片里只有这一段的若干行字。请只照抄这张图上实际看得到的行，"
+                "不要补全上文、不要续写下文、不要根据话题自由发挥。" % (part_index, part_total)
+            )
         try:
             # glm-4v-flash 的 max_tokens 上限为 1024（单页手写作文约 300-400 字，足够）
             raw_text = call_vision_llm(OCR_API_KEY, OCR_BASE_URL, OCR_MODEL,
-                                       OCR_SYSTEM_PROMPT, image, max_tokens=1024)
+                                       OCR_SYSTEM_PROMPT, image, max_tokens=1024,
+                                       user_hint=user_hint)
         except LLMError as e:
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
@@ -2171,7 +2203,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             rep = call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
                            PROOFREAD_SYSTEM_PROMPT,
-                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200, temperature=0)
+                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200, temperature=0.3)
         except LLMError as e:
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
@@ -2189,18 +2221,36 @@ class Handler(BaseHTTPRequestHandler):
                 level = "low" if str(it.get("level") or "").strip() == "low" else "high"
                 # 硬校验：长度合理、quote 必须是原文连续子串且在全文中唯一、original 在 quote 内、
                 # 建议词确实与原词不同
-                if not (1 <= len(original) <= 8 and 1 <= len(suggest) <= 8 and original != suggest):
+                if not (1 <= len(original) <= 6 and 1 <= len(suggest) <= 6 and original != suggest):
                     continue
-                # 形近字硬校验：OCR 错字是"同长度换字"——长度必须一致、差异字不超过 2 个，
-                # 且两字词以上必须与原词共享至少一个字（形近字对几乎总共享部件/整字；
-                # 宿命→命运、齿轮→螺丝这类语义替换必然过不了此关；单字换单字无法共享字，放行靠 prompt 约束）
-                if len(original) != len(suggest):
-                    continue
-                ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
-                if ndiff == 0 or ndiff > 2:
-                    continue
-                if len(original) >= 2 and not (set(original) & set(suggest)):
-                    continue
+                lo, ls = len(original), len(suggest)
+                if level == "high":
+                    # 红档（严格）：OCR 错字是"同长度换字"——长度一致、差异字 1~2 个、
+                    # 两字以上必须共享整字（宿命→命运这类语义替换必然过不了）
+                    if lo != ls:
+                        continue
+                    ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
+                    if ndiff == 0 or ndiff > 2:
+                        continue
+                    if lo >= 2 and not (set(original) & set(suggest)):
+                        continue
+                else:
+                    # 蓝档（宽松，宁多勿漏供用户参考）：
+                    # A. 等长形近/音近：差异 1~2 字；零共享时仅限 1~2 字短词（长词零共享
+                    #    大概率是语义改写，靠 prompt 约束短词读音沾边）
+                    # B. 多/漏恰好一个字：短串必须能按顺序从长串中删一个字得到
+                    if lo == ls:
+                        ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
+                        if ndiff == 0 or ndiff > 2:
+                            continue
+                        if lo > 2 and not (set(original) & set(suggest)):
+                            continue
+                    elif abs(lo - ls) == 1:
+                        short, longer = (original, suggest) if lo < ls else (suggest, original)
+                        if not is_subsequence(short, longer):
+                            continue
+                    else:
+                        continue
                 if not quote or len(quote) > 40 or original not in quote:
                     continue
                 if text.count(quote) != 1:

@@ -447,15 +447,18 @@
   }
 
   // 服务端视觉模型识别手写文字：成功返回文本；失败抛出带 code 的错误
-  function serverOcr(dataUrl, report) {
+  // partIndex/partTotal 用于告知服务端这是长图的第几段，防止模型脑补上下文
+  function serverOcr(dataUrl, report, partIndex, partTotal) {
     var ctrl = null;
     try { ctrl = new AbortController(); } catch (e) {}
     var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e) {} }, 90000);
+    var payload = { image: dataUrl };
+    if (partTotal > 1) { payload.partIndex = partIndex; payload.partTotal = partTotal; }
     return fetch('/api/ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ image: dataUrl }),
+      body: JSON.stringify(payload),
       signal: ctrl ? ctrl.signal : undefined
     }).then(function (r) {
       return r.json().then(function (j) {
@@ -805,7 +808,7 @@
           var jobs = strips.map(function (s, i) {
             return new Promise(function (resolve) {
               setTimeout(function () {
-                serverOcr(s, report).then(function (t) { mark(); resolve(t); },
+                serverOcr(s, report, i + 1, strips.length).then(function (t) { mark(); resolve(t); },
                                          function (e) { mark(); resolve({ __err: e }); });
               }, i * 350);
             });
@@ -820,12 +823,27 @@
             if (firstErr) throw firstErr;
             var cleaned = sanitizeOcrText(joinStripTexts(parts));
             var merged = cleaned.text;
+            var droppedAll = droppedSrv + cleaned.dropped;
+            // 切条/分页后全部为空（可能是切缝异常或整图偏色）：用整图原样重试一次，
+            // 单页图整图识别不会被截断；仍为空才报错
+            if (!merged && strips.length > 1) {
+              report({ status: '正在整图重新识别…', ratio: 0.9 });
+              return serverOcr(prep.dataUrl, report).then(function (t) {
+                var c2 = sanitizeOcrText(t.text || '');
+                if (!c2.text) {
+                  var e3 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
+                  e3.handled = true;
+                  throw e3;
+                }
+                return { text: c2.text, dropped: droppedAll + +(t.dropped || 0) + c2.dropped };
+              });
+            }
             if (!merged) {
               var e2 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
               e2.handled = true;
               throw e2;
             }
-            return { text: merged, dropped: droppedSrv + cleaned.dropped };
+            return { text: merged, dropped: droppedAll };
           });
         });
       }).then(function (visionResult) {
@@ -839,8 +857,8 @@
           throw new Error('拍照识别需要先登录：请点右上角「登录」后再上传照片。');
         }
         if (e && (e.code === 'quota_exceeded' || e.code === 'ocr_disabled' || e.handled)) throw e;
-        throw new Error((e && e.message ? e.message : '照片识别失败') +
-          '。可重试一次；也可直接把文字粘贴到正文框。');
+        var baseMsg = (e && e.message ? e.message : '照片识别失败').replace(/[。.！!？?\s]+$/, '');
+        throw new Error(baseMsg + '。可重试一次；也可直接把文字粘贴到正文框。');
       });
     }).then(function (visionRes) {
       if (visionRes) return visionRes;
