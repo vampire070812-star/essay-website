@@ -122,10 +122,23 @@ OCR_SYSTEM_PROMPT = (
     "也只输出能辨认出的文字或□，绝不作任何解释。"
 )
 
-# 识别后错字校对（OCR proofread）：默认复用智谱 Key 调用免费的 glm-4-flash 文本模型
-PROOFREAD_API_KEY = os.environ.get("PROOFREAD_API_KEY", "").strip() or OCR_API_KEY
-PROOFREAD_BASE_URL = os.environ.get("PROOFREAD_BASE_URL", "").strip() or OCR_BASE_URL
-PROOFREAD_MODEL = os.environ.get("PROOFREAD_MODEL", "").strip() or "glm-4-flash"
+# 识别后错字校对（OCR proofread）：优先用主 LLM（DeepSeek，响应快 3~10s），
+# 未配主 LLM 时才回退到智谱 glm-4-flash（免费但高峰期可达 70s+）
+PROOFREAD_API_KEY = (
+    os.environ.get("PROOFREAD_API_KEY", "").strip()
+    or SERVER_API_KEY
+    or OCR_API_KEY
+)
+PROOFREAD_BASE_URL = (
+    os.environ.get("PROOFREAD_BASE_URL", "").strip()
+    or SERVER_BASE_URL
+    or OCR_BASE_URL
+)
+PROOFREAD_MODEL = (
+    os.environ.get("PROOFREAD_MODEL", "").strip()
+    or SERVER_MODEL
+    or "glm-4-flash"
+)
 PROOFREAD_MAX_TEXT = 6000
 
 PROOFREAD_SYSTEM_PROMPT = (

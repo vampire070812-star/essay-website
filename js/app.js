@@ -232,7 +232,7 @@
     proofCard.hidden = true;
     pcRows.innerHTML = '';
     pcLoading.hidden = false;
-    pcLoading.textContent = '正在校对识别文字（识别服务较慢时约需 1 分钟）…';
+    pcLoading.textContent = '正在校对识别文字…';
     renderTextHighlights();
   }
 
@@ -360,8 +360,8 @@
     proofCard.hidden = false;
     var ctrl = null;
     try { ctrl = new AbortController(); } catch (e2) {}
-    // 免费的校对模型高峰期响应可达 70s+，超时放宽到 95s（服务端上限 120s）
-    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e3) {} }, 95000);
+    // DeepSeek 正常 3~10s；glm-4-flash 兜底时可达 70s，给 40s 余量
+    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e3) {} }, 40000);
     fetch('/api/proofread', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
