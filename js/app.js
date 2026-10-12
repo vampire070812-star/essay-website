@@ -138,7 +138,8 @@
     pcLoading = $('pc-loading'),
     pcRows = $('pc-rows'),
     pcCount = $('pc-count'),
-    pcClose = $('pc-close');
+    pcClose = $('pc-close'),
+    pcTip = $('pc-tip');
   var proofSeq = 0, proofItems = [], proofDone = {};
 
   /* ---------- 正文框内标红/标蓝覆盖层 ----------
@@ -231,7 +232,7 @@
     proofCard.hidden = true;
     pcRows.innerHTML = '';
     pcLoading.hidden = false;
-    pcLoading.textContent = '正在校对识别文字…';
+    pcLoading.textContent = '正在校对识别文字（识别服务较慢时约需 1 分钟）…';
     renderTextHighlights();
   }
 
@@ -341,15 +342,26 @@
 
   pcClose.addEventListener('click', resetProof);
 
+  // 校对失败或无发现时显示一行状态（不再静默隐藏，让用户知道校对是否运行过）
+  function proofStatus(msg) {
+    pcLoading.hidden = true;
+    pcRows.innerHTML = '';
+    if (pcTip) pcTip.hidden = true;
+    pcCount.textContent = msg;
+    proofCard.hidden = false;
+  }
+
   function runProofread(text) {
     resetProof();
     if (!(serverCfg && serverCfg.proofread && serverCfg.proofread.enabled)) return;
     if (!text || text.trim().length < 30) return;
     var seq = proofSeq;
+    if (pcTip) pcTip.hidden = false;
     proofCard.hidden = false;
     var ctrl = null;
     try { ctrl = new AbortController(); } catch (e2) {}
-    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e3) {} }, 25000);
+    // 免费的校对模型高峰期响应可达 70s+，超时放宽到 95s（服务端上限 120s）
+    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e3) {} }, 95000);
     fetch('/api/proofread', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -361,8 +373,12 @@
     }, function () { return null; }).then(function (res) {
       clearTimeout(timer);
       if (seq !== proofSeq) return; // 已被新的识别/清空取代
-      if (!res || !res.ok || !res.j || !res.j.ok || !Array.isArray(res.j.items) || !res.j.items.length) {
-        proofCard.hidden = true; // 未登录/失败/无错字：静默收起，不打扰
+      if (!res || !res.ok || !res.j || !res.j.ok || !Array.isArray(res.j.items)) {
+        proofStatus('校对未完成（识别服务响应较慢），不影响批改，请人工核对正文'); // 未登录/超时/失败
+        return;
+      }
+      if (!res.j.items.length) {
+        proofStatus('校对完成：未发现明显的识别错字');
         return;
       }
       proofItems = res.j.items;
@@ -370,7 +386,7 @@
       renderProofRows();
     }).catch(function () {
       clearTimeout(timer);
-      if (seq === proofSeq) proofCard.hidden = true;
+      if (seq === proofSeq) proofStatus('校对未完成（识别服务响应较慢），不影响批改，请人工核对正文');
     });
   }
 
