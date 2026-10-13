@@ -448,12 +448,14 @@
 
   // 服务端视觉模型识别手写文字：成功返回文本；失败抛出带 code 的错误
   // partIndex/partTotal 用于告知服务端这是长图的第几段，防止模型脑补上下文
-  function serverOcr(dataUrl, report, partIndex, partTotal) {
+  // isTitle=true 表示这是单独裁出的题目条带，服务端换用题目专用识别提示
+  function serverOcr(dataUrl, report, partIndex, partTotal, isTitle) {
     var ctrl = null;
     try { ctrl = new AbortController(); } catch (e) {}
     var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e) {} }, 90000);
     var payload = { image: dataUrl };
     if (partTotal > 1) { payload.partIndex = partIndex; payload.partTotal = partTotal; }
+    if (isTitle) payload.titleBand = true;
     return fetch('/api/ocr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -729,6 +731,75 @@
     });
   }
 
+  // 单页照片的顶部题目带裁切：从顶部第一行内容起，找其后第一处「大空白带」，
+  // 空白带上方即题目区（印刷材料/手写标题），下方是正文。题目带单独成条、
+  // 用专用提示识别（印刷题目常带批注线条且字小，混在正文条里容易被识别乱）。
+  // 返回 { band, rest }；找不到可靠边界返回 null（维持原切条逻辑）。
+  function cutTopBand(dataUrl) {
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth, h = img.naturalHeight;
+          var base = document.createElement('canvas');
+          base.width = w; base.height = h;
+          var bctx = base.getContext('2d');
+          bctx.fillStyle = '#fff';
+          bctx.fillRect(0, 0, w, h);
+          bctx.drawImage(img, 0, 0);
+          var ctx = base.getContext('2d');
+          var step = Math.max(1, Math.floor(w / 600));
+          var darkRow = function (y) {
+            var px = ctx.getImageData(0, y, w, 1).data, c = 0;
+            for (var x = 0; x < w; x += step) {
+              var i = x * 4;
+              var g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+              if (g < 150) c++;
+            }
+            return c;
+          };
+          var lim = Math.round(h * 0.32);
+          var top = -1;
+          for (var y = Math.round(h * 0.01); y < lim; y++) {
+            if (darkRow(y) >= 6) { top = y; break; }
+          }
+          if (top < 0) { resolve(null); return; } // 顶部全空白
+          var needBlank = Math.max(20, Math.round(h * 0.03));
+          var run = 0, cut = -1;
+          for (var y2 = top + 1; y2 < lim; y2++) {
+            if (darkRow(y2) < 6) {
+              run++;
+              if (run >= needBlank) { cut = y2 - run + 2; break; }
+            } else run = 0;
+          }
+          // 题目带太矮（可能只是页眉）或没找到边界 → 不裁
+          if (cut < 0 || cut - top < Math.round(h * 0.015)) { resolve(null); return; }
+          var pad = 14;
+          var sc = Math.min(2, Math.max(1, 460 / (cut - top))); // 宽扁条放大 1~2 倍
+          var bw = Math.round(w * sc), bh = Math.round((cut - top) * sc);
+          var bc = document.createElement('canvas');
+          bc.width = bw + pad * 2; bc.height = bh + pad * 2;
+          var bctx2 = bc.getContext('2d');
+          bctx2.fillStyle = '#fff';
+          bctx2.fillRect(0, 0, bc.width, bc.height);
+          bctx2.drawImage(base, 0, top, w, cut - top, pad, pad, bw, bh);
+          var rc = document.createElement('canvas');
+          rc.width = w; rc.height = h - cut;
+          var rctx = rc.getContext('2d');
+          rctx.fillStyle = '#fff';
+          rctx.fillRect(0, 0, rc.width, rc.height);
+          rctx.drawImage(base, 0, cut, w, h - cut, 0, 0, w, h - cut);
+          resolve({
+            band: { url: bc.toDataURL('image/jpeg', 0.9), w: bc.width, h: bc.height },
+            rest: { url: rc.toDataURL('image/jpeg', 0.9), w: w, h: h - cut }
+          });
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = function () { resolve(null); };
+      img.src = dataUrl;
+    });
+  }
+
   // 条数：竖版长图切更多条（作文照片典型比例 3:4 ~ 9:16）
   function stripCountFor(w, h) {
     var r = h / Math.max(1, w);
@@ -899,10 +970,30 @@
         // 每页再按高度横切条（拼接顺序：题目条→左页各条→右页各条）
         return splitPages(prep.dataUrl, prep.width, prep.height).then(function (pages) {
           var chain = Promise.resolve([]);
-          pages.forEach(function (pg) {
+          pages.forEach(function (pg, pi) {
             chain = chain.then(function (acc) {
+              // 单页（竖版照片/未检出双页缝）：先尝试裁顶部题目带——
+              // 印刷题目常带批注线条、字又小，单独成条+专用提示识别得更完整
+              if (pages.length === 1) {
+                return cutTopBand(pg.url).then(function (tb) {
+                  var mk = function (s) { return { u: s, t: 0 }; };
+                  if (tb) {
+                    return splitStrips(tb.rest.url, stripCountFor(tb.rest.w, tb.rest.h))
+                      .then(function (ss) {
+                        return acc.concat([{ u: tb.band.url, t: 1 }]).concat(ss.map(mk));
+                      });
+                  }
+                  return splitStrips(pg.url, stripCountFor(pg.w, pg.h)).then(function (ss) {
+                    return acc.concat(ss.map(mk));
+                  });
+                });
+              }
+              // 横版双页：宽扁的第一页就是 splitPages 裁出的题目带，标记为题目
+              var firstIsBand = pi === 0 && pg.h < pg.w * 0.35;
               return splitStrips(pg.url, stripCountFor(pg.w, pg.h)).then(function (ss) {
-                return acc.concat(ss);
+                return acc.concat(ss.map(function (s, si) {
+                  return { u: s, t: firstIsBand && si === 0 ? 1 : 0 };
+                }));
               });
             });
           });
@@ -920,7 +1011,7 @@
           var jobs = strips.map(function (s, i) {
             return new Promise(function (resolve) {
               setTimeout(function () {
-                serverOcr(s, report, i + 1, strips.length).then(function (t) { mark(); resolve(t); },
+                serverOcr(s.u, report, i + 1, strips.length, s.t).then(function (t) { mark(); resolve(t); },
                                          function (e) { mark(); resolve({ __err: e }); });
               }, i * 350);
             });
@@ -967,7 +1058,7 @@
             var retries = emptyIdx.map(function (i, k) {
               return new Promise(function (resolve) {
                 setTimeout(function () {
-                  serverOcr(strips[i], report, i + 1, strips.length).then(
+                  serverOcr(strips[i].u, report, i + 1, strips.length, strips[i].t).then(
                     function (t) { parts[i] = t.text || ''; droppedSrv += +(t.dropped || 0); resolve(); },
                     function () { resolve(); });
                 }, k * 350);

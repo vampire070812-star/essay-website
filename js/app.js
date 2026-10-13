@@ -435,6 +435,52 @@
     upBar.style.width = Math.round((ratio || 0) * 100) + '%';
   }
 
+  // AI 题目提取：图片 OCR 文本交给服务端 LLM 摘出题目材料并定位正文起点。
+  // 服务端有硬校验（材料须含任务/要求特征、锚点引文必须真实存在于原文），
+  // 前端再按锚点切分；任何失败都返回 null 回退到规则切分，绝不阻塞上传。
+  function aiSplitTitle(text) {
+    if (!text || text.length < 60) return Promise.resolve(null);
+    var ctrl = null;
+    try { ctrl = new AbortController(); } catch (e) {}
+    var timer = setTimeout(function () { try { ctrl && ctrl.abort(); } catch (e) {} }, 45000);
+    return fetch('/api/extract-title', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ text: text.slice(0, 6000) }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      clearTimeout(timer);
+      if (!j || !j.ok) return null;
+      var prompt = String(j.prompt || '').trim();
+      var quote = String(j.quote || '').trim();
+      if (!prompt) return null; // 服务端判定无题目材料 → 走规则切分提示
+      var at = locateLoose(text, quote); // 按锚点引文定位正文起点
+      if (at < 1) return null;
+      return { detected: true, prompt: prompt, essay: text.slice(at), by: 'ai' };
+    }).catch(function () {
+      clearTimeout(timer);
+      return null;
+    });
+  }
+
+  // 在原文中定位 quote（忽略所有空白差异），返回其起始下标；找不到返回 -1
+  function locateLoose(text, quote) {
+    var q = String(quote || '').replace(/[\s\u3000]+/g, '');
+    if (!q) return -1;
+    var flat = '', map = [];
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      if (/[\s\u3000]/.test(ch)) continue;
+      flat += ch;
+      map.push(i);
+    }
+    var at = flat.indexOf(q);
+    return at >= 0 ? map[at] : -1;
+  }
+
+  var lastAutoPrompt = ''; // 最近一次自动填入题目框的内容（再上传时可安全覆盖）
+
   function handleFiles(files) {
     if (!window.EssayFile) {
       tipEl.textContent = '文件识别组件未加载（file-upload.js 缺失），请刷新页面。';
@@ -455,27 +501,37 @@
       if (seq !== uploadSeq) return;
       setUploadProgress(dispName, p.status || '识别中……', p.ratio || 0);
     }).then(function (res) {
-      if (seq !== uploadSeq) return; // 已被取消
+      if (seq !== uploadSeq) return;
+      // 图片 OCR 优先用 AI 提取题目材料（严格防编造+服务端硬校验），失败回退规则切分
+      var pre = res.kind === 'image' ? aiSplitTitle(res.text) : Promise.resolve(null);
+      return pre.then(function (ai) {
+        if (seq !== uploadSeq) return;
 
-      // 自动拆分：文件中若同时包含「作文题目」与「作文（标题+正文）」，
-      // 只把题目拆到第一步；标题保留在正文首行，不单独填写。
-      var bodyText = res.text;
-      var splitMsg = '';
-      try {
-        var split = EssayFile.splitDocument(res.text);
-        if (split.detected) {
-          if (!promptEl.value.trim()) {
-            promptEl.value = split.prompt;
-            bodyText = split.essay;
-            splitMsg = '已自动识别出作文题目并填入上方第一步（标题保留在正文首行，无需单独填写）';
-            if (examSel.value) examSel.value = '';
+        // 自动拆分：文件中若同时包含「作文题目」与「作文（标题+正文）」，
+        // 只把题目拆到第一步；标题保留在正文首行，不单独填写。
+        var bodyText = res.text;
+        var splitMsg = '';
+        try {
+          var split = ai || EssayFile.splitDocument(res.text);
+          // 题目框为空，或仍是上次自动填入的旧内容（未被手工编辑）→ 允许覆盖
+          var cur = promptEl.value.trim();
+          var stale = cur && cur === lastAutoPrompt.trim();
+          if (split.detected) {
+            if (!cur || stale) {
+              promptEl.value = split.prompt;
+              lastAutoPrompt = split.prompt;
+              bodyText = split.essay;
+              splitMsg = '已自动识别出作文题目并填入上方第一步' +
+                (split.by === 'ai' ? '（AI 从识别文本中提取）' : '') +
+                '（标题保留在正文首行，无需单独填写）';
+              if (examSel.value) examSel.value = '';
+            } else {
+              splitMsg = '题目框已有内容，文件全文已作为作文正文（如需改用文件中的题目，请先清空上方题目框再重新上传）';
+            }
           } else {
-            splitMsg = '题目框已有内容，文件全文已作为作文正文（如需改用文件中的题目，请先清空上方题目框再重新上传）';
+            splitMsg = '未检测到独立的作文题目，全部内容已作为作文正文；如需审题可在第一步单独粘贴题目';
           }
-        } else {
-          splitMsg = '未检测到独立的作文题目，全部内容已作为作文正文；如需审题可在第一步单独粘贴题目';
-        }
-      } catch (e) { splitMsg = ''; }
+        } catch (e) { splitMsg = ''; }
 
       textEl.value = bodyText;
       updateCount();

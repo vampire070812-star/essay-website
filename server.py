@@ -126,6 +126,38 @@ OCR_SYSTEM_PROMPT = (
     "也只输出能辨认出的字或□，绝不作任何解释。"
 )
 
+# 题目条带专用提示：单独裁出的作文纸顶部条带（印刷题目材料 + 可能的批注干扰）
+TITLE_OCR_HINT = (
+    "这张图是作文纸最顶部的条带：上面可能有印刷的作文题目材料（通常是小字，"
+    "可能被下划线、圆圈、波浪线划过），也可能有手写的作文标题。"
+    "请务必把印刷的题目材料逐字完整转写——它经常被批注线条划过、字又小，"
+    "最容易被漏掉，这是本任务的重中之重；手写的作文标题也要转写。"
+    "但老师在旁边写的两三个字批注词语（如“论题”“重点”“层次”这类独立小字）、"
+    "下划线、圆圈、波浪线等标记本身不是文字内容，一律不要输出。"
+)
+
+# AI 题目提取：从 OCR 原文里摘出题目材料并定位正文起点。
+# 关键约束：只允许摘录+修正明显识别错字+删除批注碎片，严禁编造材料内容；
+# 正文起点用「逐字复制的锚点引文」传回，前端按锚点切分，避免回传全文。
+EXTRACT_TITLE_SYSTEM_PROMPT = (
+    "你是作文题目材料提取器。输入是作文照片的 OCR 识别原文（可能有识别错字、"
+    "漏字、重复碎片，也可能混入老师的手写批注词语如“论题”“重点”“层次”）。"
+    "文本的开头部分可能是作文题目材料，特征：先是一段材料陈述（话题引子），"
+    "接着是任务句（如“对此，你怎么看？”“请写一篇文章，谈谈你的思考。”），"
+    "最后是写作要求（如“要求：（1）自拟题目；（2）不少于800字。”）。"
+    "你的任务：\n"
+    "1) 如果存在题目材料：把材料从第一句到最后一句要求逐字摘出，输出到 prompt 字段。"
+    "允许的清理：修正明显的 OCR 识别错字（如“让欣喜”→“让人欣喜的”）、删除混入的"
+    "批注词语和重复碎片、恢复被识别错字破坏的通顺语序。严禁编造、扩写、续写原文中"
+    "不存在的材料内容——材料开头若在 OCR 中缺失，就保持缺失，绝不允许自己补一个开头。"
+    "严禁把正文内容当成题目材料摘进来。\n"
+    "2) 如果没有题目材料（整个文本都是作文正文），prompt 输出空字符串 \"\"。\n"
+    "3) essay_start_quote：紧随题目材料之后的作文部分开头（通常是手写作文标题行，"
+    "没有标题就是正文第一段开头），从原文中逐字复制连续的 6~12 个字，"
+    "这个引文必须在原文中原样出现。\n"
+    "只输出 JSON：{\"prompt\": \"...\", \"essay_start_quote\": \"...\"}"
+)
+
 # 识别后错字校对（OCR proofread）：优先用主 LLM（DeepSeek，响应快 3~10s），
 # 未配主 LLM 时才回退到智谱 glm-4-flash（免费但高峰期可达 70s+）
 PROOFREAD_API_KEY = (
@@ -1799,6 +1831,11 @@ class Handler(BaseHTTPRequestHandler):
             if data is not None:
                 self.handle_proofread(data)
             return
+        if path == "/api/extract-title":
+            data = self._read_body(120 * 1024)
+            if data is not None:
+                self.handle_extract_title(data)
+            return
         if path not in ("/api/grade", "/api/analyze"):
             self.send_error(404, "Not Found")
             return
@@ -2155,7 +2192,10 @@ class Handler(BaseHTTPRequestHandler):
         part_index = data.get("partIndex")
         part_total = data.get("partTotal")
         user_hint = None
-        if isinstance(part_index, int) and isinstance(part_total, int) \
+        if data.get("titleBand"):
+            # 单独裁出的题目条带：用专用提示（转写印刷题目、忽略批注线条）
+            user_hint = TITLE_OCR_HINT
+        elif isinstance(part_index, int) and isinstance(part_total, int) \
                 and 1 <= part_index <= part_total and part_total > 1:
             user_hint = (
                 "这是一张长作文照片横向裁切出的第 %d 段（共 %d 段），"
@@ -2181,6 +2221,56 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "text": text,
                          "engine": "vision", "model": OCR_MODEL,
                          "droppedMeta": dropped_meta,
+                         "elapsed": round(time.time() - t0, 1)})
+
+    def handle_extract_title(self, data):
+        """AI 提取题目材料：从 OCR 原文中摘出题目并给出正文起点锚点引文。
+        要求登录但不占用每日批改/审题计数；与识别校对共用主 LLM 回退链。"""
+        if not PROOFREAD_API_KEY:
+            self._send_json({"ok": False, "code": "extract_disabled"}, 503)
+            return
+        text = str(data.get("text") or "").strip()
+        if len(text) < 40:
+            self._send_json({"ok": False, "code": "too_short",
+                             "message": "文本太短，无需提取题目"}, 400)
+            return
+        user = self._current_user()
+        if not ALLOW_ANON_SERVER_AI and not user:
+            self._api_error("login_required", "题目提取需要先登录账号。", 401)
+            return
+
+        t0 = time.time()
+        try:
+            rep = call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
+                           EXTRACT_TITLE_SYSTEM_PROMPT,
+                           "OCR 原文：\n" + text[:PROOFREAD_MAX_TEXT], 1500,
+                           temperature=0.1)
+        except LLMError as e:
+            status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
+            self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
+            return
+
+        def bad(code):
+            self._send_json({"ok": False, "code": code,
+                             "message": "提取结果未通过校验，已回退到规则切分"}, 422)
+
+        prompt = str(rep.get("prompt") or "").strip()
+        quote = str(rep.get("essay_start_quote") or "").strip()
+        # 服务端硬校验：题目材料必须有任务/要求特征且长度合理；锚点引文必须
+        # 在原文中真实存在（去空白后比对）——防止模型编造材料或伪造锚点
+        if prompt:
+            if not (20 <= len(prompt) <= 800) \
+                    or not re.search(r"要求|怎么看|谈谈|写一篇|不少于|自拟", prompt):
+                bad("bad_prompt")
+                return
+        if not quote:
+            if prompt:  # 有材料就必须有正文锚点，否则前端无法切分
+                bad("bad_quote")
+                return
+        elif len(quote) > 30 or re.sub(r"\s+", "", quote) not in re.sub(r"\s+", "", text):
+            bad("bad_quote")
+            return
+        self._send_json({"ok": True, "prompt": prompt, "quote": quote,
                          "elapsed": round(time.time() - t0, 1)})
 
     def handle_proofread(self, data):
