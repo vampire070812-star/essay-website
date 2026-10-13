@@ -518,8 +518,9 @@
     if (hh <= 0) return { x: xCenter, dark: 1e9 };
     var ctx = canvas.getContext('2d');
     var px = ctx.getImageData(0, yStart, w, hh).data;
-    var bestX = 0, bestC = 1e9;
     var step = Math.max(1, Math.floor(hh / 600));
+    var counts = new Array(ww);
+    var minC = 1e9;
     for (var c = 0; c < ww; c++) {
       var cnt = 0, x = x0 + c;
       for (var r = 0; r < hh; r += step) {
@@ -527,14 +528,108 @@
         var g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
         if (g < 150) cnt++;
       }
-      if (cnt < bestC) { bestC = cnt; bestX = c; }
+      counts[c] = cnt;
+      if (cnt < minC) minC = cnt;
     }
-    return { x: x0 + bestX, dark: bestC };
+    // 在与最空白列相近（≤minC+2）的列中取离画面中心最近的一列：
+    // 文字栏内整齐的字符间隙也可能整列空白（尤其打印体/工整手写），
+    // 若简单取"最左的最空白列"会把正文栏拦腰切成两截（split44 测试暴露）
+    var lim = minC + 2;
+    var bestX = -1, bestDist = 1e9;
+    for (var c2 = 0; c2 < ww; c2++) {
+      if (counts[c2] > lim) continue;
+      var d = Math.abs(x0 + c2 - xCenter);
+      if (d < bestDist) { bestDist = d; bestX = c2; }
+    }
+    return { x: bestX >= 0 ? x0 + bestX : xCenter, dark: bestX >= 0 ? counts[bestX] : minC };
+  }
+
+  // 顶部通栏题目区检测：横版双页稿纸的题目材料常横跨左右两页印在整张纸最上方。
+  // 若直接竖切，通栏题目会被拦腰切成左右两半（左半随左页、右半随右页），
+  // 导致题目残缺、碎片混入正文。依据：通栏题目行会穿过中缝（带内有印刷笔画
+  // 暗像素），而正文区中缝列是空白的（findBlankCol 已验证）。
+  // 返回通栏区下边界 y；无通栏区或检测不可信时返回 0（维持原整高竖切）。
+  function findHeaderBottom(canvas, gapX, maxY) {
+    var w = canvas.width, h = canvas.height;
+    var bw = Math.max(6, Math.round(w * 0.025));   // 中缝两侧各 2.5% 宽
+    var x0 = Math.max(0, gapX - bw);
+    var bwid = Math.min(w, gapX + bw) - x0;
+    var yLim = Math.min(h, Math.max(1, Math.round(maxY)));
+    if (bwid < 4 || yLim < 8) return 0;
+    var ctx = canvas.getContext('2d');
+    var px = ctx.getImageData(x0, 0, bwid, yLim).data;
+    var last = -1;
+    for (var r = 0; r < yLim; r++) {
+      var c = 0;
+      for (var x = 0; x < bwid; x++) {
+        var i = (r * bwid + x) * 4;
+        var g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        if (g < 150) c++;
+      }
+      if (c >= 4) last = r; // 该行中缝带内有成笔画的暗点 → 仍属通栏区
+    }
+    if (last < Math.round(h * 0.02)) return 0; // 通栏区太矮，视为没有
+    // 中缝带只能定位"穿过中缝"的题目行；材料末行（如"要求：…"）可能偏左
+    // 够不到中缝。从 last 起全宽逐行下扫：题目行块内行距小、题文间空白带大，
+    // 且正文行左右两栏都有暗点（偏左的题目末行不会误判为正文）。
+    var scanMax = Math.min(yLim, last + Math.round(h * 0.2));
+    var sh = scanMax - (last + 1);
+    var cut = last + 2;
+    if (sh > 4) {
+      var px2 = ctx.getImageData(0, last + 1, w, sh).data;
+      var step = Math.max(1, Math.floor(w / 600));
+      var needBlank = Math.max(18, Math.round(h * 0.02));
+      var halfW = w >> 1;
+      var r2 = 0;
+      // 先越过 last 所在题目行的全宽残尾（中缝带底线 ≠ 该行全宽底线，
+      // 不越过的话残尾是"左右皆有暗点"的通栏行，会被误判为正文首行）
+      for (; r2 < sh; r2++) {
+        var d0 = 0;
+        for (var x0b = 0; x0b < w; x0b += step) {
+          var j0 = (r2 * w + x0b) * 4;
+          var g0 = (px2[j0] * 299 + px2[j0 + 1] * 587 + px2[j0 + 2] * 114) / 1000;
+          if (g0 < 150) d0++;
+        }
+        if (d0 >= 6) continue;
+        break;
+      }
+      var blankRun = 0, runStart = -1, done = false;
+      for (; r2 < sh && !done; r2++) {
+        var dark = 0, leftHas = false, rightHas = false;
+        for (var x2 = 0; x2 < w; x2 += step) {
+          var j = (r2 * w + x2) * 4;
+          var g2 = (px2[j] * 299 + px2[j + 1] * 587 + px2[j + 2] * 114) / 1000;
+          if (g2 < 150) {
+            dark++;
+            if (x2 < halfW) leftHas = true; else rightHas = true;
+          }
+        }
+        if (dark >= 6) {
+          if (leftHas && rightHas) { // 撞到正文首行（两栏都有字）：切在它上方
+            cut = Math.max(last + 2, last + r2);
+            done = true;
+          } else { // 仍是题目行（如偏左的"要求：…"），继续下扫
+            blankRun = 0; runStart = -1;
+          }
+        } else {
+          if (runStart < 0) runStart = r2;
+          blankRun++;
+          if (blankRun >= needBlank) { // 题目-正文空白带内
+            cut = last + 1 + runStart + 2;
+            done = true;
+          }
+        }
+      }
+    }
+    if (cut > Math.round(h * 0.32)) return 0; // 高得离谱（疑似竖线/阴影干扰），宁可不切
+    return Math.min(cut, yLim);
   }
 
   // 横版双页分页：两栏稿纸拍在一张横图里时必须先竖向切成左右两页，
   // 否则整图一次请求超出视觉模型输出上限（1024 tokens），后半截文字会丢失。
   // 中缝必须足够空白且落在画面中部 28%~72% 之间，否则视为单页不动。
+  // 竖切前先把顶部通栏题目区整体裁出（若有），作为独立识别单元排在最前，
+  // 否则通栏题目会被切成左右两半，碎片混进正文（split44 修复）。
   function splitPages(dataUrl, w, h) {
     var one = [{ url: dataUrl, w: w, h: h }];
     return new Promise(function (resolve) {
@@ -552,18 +647,31 @@
           var cleanMax = Math.max(8, Math.round(h * 0.01));
           if (gap.dark > cleanMax || gap.x < w * 0.28 || gap.x > w * 0.72) { resolve(one); return; }
           var pad = 14, out = [];
+          // 顶部通栏题目区整体裁出，排在识别队列最前（不参与竖切）
+          var headBottom = findHeaderBottom(base, gap.x, h * 0.45);
+          var bodyY = headBottom > 0 ? headBottom : 0;
+          var bodyH = h - bodyY;
+          if (headBottom > 0) {
+            var hc = document.createElement('canvas');
+            hc.width = w + pad * 2; hc.height = headBottom + pad * 2;
+            var hctx = hc.getContext('2d');
+            hctx.fillStyle = '#fff';
+            hctx.fillRect(0, 0, hc.width, hc.height);
+            hctx.drawImage(base, 0, 0, w, headBottom, pad, pad, w, headBottom);
+            out.push({ url: hc.toDataURL('image/jpeg', 0.9), w: hc.width, h: hc.height });
+          }
           [[0, gap.x], [gap.x, w]].forEach(function (rg) {
             var cw = rg[1] - rg[0];
             if (cw < w * 0.2) return;
             var cc = document.createElement('canvas');
-            cc.width = cw + pad * 2; cc.height = h + pad * 2;
+            cc.width = cw + pad * 2; cc.height = bodyH + pad * 2;
             var cctx = cc.getContext('2d');
             cctx.fillStyle = '#fff';
             cctx.fillRect(0, 0, cc.width, cc.height);
-            cctx.drawImage(base, rg[0], 0, cw, h, pad, pad, cw, h);
+            cctx.drawImage(base, rg[0], bodyY, cw, bodyH, pad, pad, cw, bodyH);
             out.push({ url: cc.toDataURL('image/jpeg', 0.9), w: cc.width, h: cc.height });
           });
-          resolve(out.length === 2 ? out : one);
+          resolve(out.length >= 2 ? out : one);
         } catch (e) { resolve(one); }
       };
       img.onerror = function () { resolve(one); };
@@ -784,7 +892,8 @@
       report({ status: '正在压缩照片…', ratio: 0.08 });
       return preprocessImage(file, { longEdge: 2600 }).then(function (prep) {
         report({ status: '正在识别手写文字…', ratio: 0.25 });
-        // 横版双页稿纸先竖向分页，每页再按高度横切条（拼接顺序：左页各条→右页各条）
+        // 横版双页稿纸先竖向分页（顶部通栏题目区整体裁出排最前），
+        // 每页再按高度横切条（拼接顺序：题目条→左页各条→右页各条）
         return splitPages(prep.dataUrl, prep.width, prep.height).then(function (pages) {
           var chain = Promise.resolve([]);
           pages.forEach(function (pg) {
