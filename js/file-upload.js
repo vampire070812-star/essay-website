@@ -652,12 +652,15 @@
           var bodyY = headBottom > 0 ? headBottom : 0;
           var bodyH = h - bodyY;
           if (headBottom > 0) {
+            // 题目带是宽扁条，印刷小字的有效分辨率低；放大 1~2 倍再送识别
+            var sc = Math.min(2, Math.max(1, 460 / headBottom));
+            var hw2 = Math.round(w * sc), hh2 = Math.round(headBottom * sc);
             var hc = document.createElement('canvas');
-            hc.width = w + pad * 2; hc.height = headBottom + pad * 2;
+            hc.width = hw2 + pad * 2; hc.height = hh2 + pad * 2;
             var hctx = hc.getContext('2d');
             hctx.fillStyle = '#fff';
             hctx.fillRect(0, 0, hc.width, hc.height);
-            hctx.drawImage(base, 0, 0, w, headBottom, pad, pad, w, headBottom);
+            hctx.drawImage(base, 0, 0, w, headBottom, pad, pad, hw2, hh2);
             out.push({ url: hc.toDataURL('image/jpeg', 0.9), w: hc.width, h: hc.height });
           }
           [[0, gap.x], [gap.x, w]].forEach(function (rg) {
@@ -930,29 +933,56 @@
               return o && o.text || '';
             });
             if (firstErr) throw firstErr;
-            var cleaned = sanitizeOcrText(joinStripTexts(parts));
-            var merged = cleaned.text;
-            var droppedAll = droppedSrv + cleaned.dropped;
-            // 切条/分页后全部为空（可能是切缝异常或整图偏色）：用整图原样重试一次，
-            // 单页图整图识别不会被截断；仍为空才报错
-            if (!merged && strips.length > 1) {
-              report({ status: '正在整图重新识别…', ratio: 0.9 });
-              return serverOcr(prep.dataUrl, report).then(function (t) {
-                var c2 = sanitizeOcrText(t.text || '');
-                if (!c2.text) {
-                  var e3 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
-                  e3.handled = true;
-                  throw e3;
-                }
-                return { text: c2.text, dropped: droppedAll + +(t.dropped || 0) + c2.dropped };
+            function assemble() {
+              var cleaned = sanitizeOcrText(joinStripTexts(parts));
+              var merged = cleaned.text;
+              var droppedAll = droppedSrv + cleaned.dropped;
+              // 全部为空（可能是切缝异常或整图偏色）：用整图原样重试一次，
+              // 单页图整图识别不会被截断；仍为空才报错
+              if (!merged && strips.length > 1) {
+                report({ status: '正在整图重新识别…', ratio: 0.9 });
+                return serverOcr(prep.dataUrl, report).then(function (t) {
+                  var c2 = sanitizeOcrText(t.text || '');
+                  if (!c2.text) {
+                    var e3 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
+                    e3.handled = true;
+                    throw e3;
+                  }
+                  return { text: c2.text, dropped: droppedAll + +(t.dropped || 0) + c2.dropped };
+                });
+              }
+              if (!merged) {
+                var e2 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
+                e2.handled = true;
+                throw e2;
+              }
+              return { text: merged, dropped: droppedAll };
+            }
+            // 部分切条没识别出字（视觉模型偶发空返回）：逐条重试一次。
+            // 绝不静默丢弃——丢一条就是丢一整段正文（实测曾静默丢约 1/3 内容）
+            var emptyIdx = [];
+            parts.forEach(function (p, i) { if (!p) emptyIdx.push(i); });
+            if (!emptyIdx.length) return assemble();
+            report({ status: '有 ' + emptyIdx.length + ' 段未识别出文字，正在重试…', ratio: 0.85 });
+            var retries = emptyIdx.map(function (i, k) {
+              return new Promise(function (resolve) {
+                setTimeout(function () {
+                  serverOcr(strips[i], report, i + 1, strips.length).then(
+                    function (t) { parts[i] = t.text || ''; droppedSrv += +(t.dropped || 0); resolve(); },
+                    function () { resolve(); });
+                }, k * 350);
               });
-            }
-            if (!merged) {
-              var e2 = new Error('未从照片中识别到文字：请确认照片清晰、光线充足、文字占画面足够大后重试。');
-              e2.handled = true;
-              throw e2;
-            }
-            return { text: merged, dropped: droppedAll };
+            });
+            return Promise.all(retries).then(function () {
+              var stillEmpty = 0, hasText = false;
+              parts.forEach(function (p) { if (p) hasText = true; else stillEmpty++; });
+              if (stillEmpty && hasText) {
+                var e4 = new Error('有 ' + stillEmpty + ' 段文字反复识别不出（照片可能有阴影、反光或对比度过低），请把照片拍得平整、光线均匀后重试。');
+                e4.handled = true;
+                throw e4;
+              }
+              return assemble(); // 仍全部为空 → 走整图重试兜底
+            });
           });
         });
       }).then(function (visionResult) {
