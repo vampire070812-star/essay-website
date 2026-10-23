@@ -627,15 +627,102 @@
     return Math.min(cut, yLim);
   }
 
-  // 横版双页分页：两栏稿纸拍在一张横图里时必须先竖向切成左右两页，
+  // 多栏稿纸栏缝检测（双栏/三栏通用，抗拍摄倾斜与透视）。
+  // 整图竖直投影找不到栏缝：拍照透视会让栏缝位置随高度漂移（实测 3° 斜拍时
+  // 漂移 ≈45px，超过栏缝自身宽度），且稿纸栏间常印有分隔线/框线，不存在
+  // 「全高干净的空白列」。改为：把画面分成 ~16 个矮横带，带内漂移可忽略，
+  // 每带独立找低密度竖带（栏缝），再跨带聚类出稳定栏缝（须出现在过半数带中，
+  // 以此滤掉段末空格带、栏内字符间隙等只在局部出现的假缝）。
+  // 返回 { bands: [{y0,y1,cuts:[x..]}], cuts: [聚类中心x..] }，检不出返回 null。
+  function findGutterTracks(base) {
+    var w = base.width, h = base.height;
+    var ctx = base.getContext('2d');
+    var yTop = Math.round(h * 0.06), yEnd = Math.round(h * 0.97);
+    var bandH = Math.max(60, Math.round(h / 16));
+    var minRunW = Math.max(10, Math.round(w * 0.012));  // 合并后空白带最小宽度
+    var mergeGap = Math.max(20, Math.round(w * 0.012)); // 同一条栏缝内子带（被分隔线隔开）的合并距离
+    var loX = w * 0.10, hiX = w * 0.90;
+    var bands = [];
+    for (var by = yTop; by < yEnd - 40; by += bandH) {
+      var bh = Math.min(bandH, yEnd - by);
+      var data;
+      try { data = ctx.getImageData(0, by, w, bh).data; } catch (e) { return null; }
+      var samples = Math.ceil(bh / 2);
+      var cleanMax = Math.max(3, Math.round(samples * 0.15)); // 带内密度 ≤15% 算空白列
+      var dark = new Uint16Array(w), x, y, i, g;
+      for (y = 0; y < bh; y += 2) {
+        var rowBase = y * w * 4;
+        for (x = 0; x < w; x++) {
+          i = rowBase + x * 4;
+          g = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+          if (g < 150) dark[x]++;
+        }
+      }
+      // 空白列聚成带，相近的带（同一条栏缝被分隔线/框线拆出的子带）合并
+      var runs = [], run = -1;
+      for (x = 0; x < w; x++) {
+        if (dark[x] <= cleanMax) { if (run < 0) run = x; }
+        else if (run >= 0) {
+          if (runs.length && run - runs[runs.length - 1][1] <= mergeGap) runs[runs.length - 1][1] = x - 1;
+          else runs.push([run, x - 1]);
+          run = -1;
+        }
+      }
+      if (run >= 0) {
+        if (runs.length && run - runs[runs.length - 1][1] <= mergeGap) runs[runs.length - 1][1] = w - 1;
+        else runs.push([run, w - 1]);
+      }
+      var cuts = [];
+      runs.forEach(function (r) {
+        if (r[1] - r[0] + 1 < minRunW) return;          // 太窄：栏内字符间隙
+        var cx = (r[0] + r[1]) / 2;
+        if (cx < loX || cx > hiX) return;               // 太靠边：页边距
+        cuts.push(cx);
+      });
+      bands.push({ y0: by, y1: by + bh, cuts: cuts });
+    }
+    if (bands.length < 4) return null;
+    // 跨带聚类：相邻 5%w 内的切点归为一簇
+    var pts = [];
+    bands.forEach(function (b, bi) {
+      b.cuts.forEach(function (cx) { pts.push({ x: cx, band: bi }); });
+    });
+    if (!pts.length) return null;
+    pts.sort(function (a, b2) { return a.x - b2.x; });
+    var clusters = [];
+    pts.forEach(function (p) {
+      var last = clusters[clusters.length - 1];
+      if (last && p.x - last.mean <= w * 0.05) {
+        last.items.push(p);
+        var s = 0; last.items.forEach(function (q) { s += q.x; });
+        last.mean = s / last.items.length;
+      } else clusters.push({ mean: p.x, items: [p] });
+    });
+    var need = Math.max(3, Math.round(bands.length * 0.5));
+    clusters = clusters.filter(function (cl) {
+      var seen = {};
+      cl.items.forEach(function (p) { seen[p.band] = 1; });
+      return Object.keys(seen).length >= need;          // 须出现在过半数带中
+    });
+    if (clusters.length < 1 || clusters.length > 3) return null;
+    // 分栏宽度合理性：相邻缝间距（含两端到页边）都不得小于 15% 图宽
+    var cuts = clusters.map(function (cl) { return cl.mean; });
+    var bounds = [0].concat(cuts).concat([w]);
+    for (var c = 0; c + 1 < bounds.length; c++) {
+      if (bounds[c + 1] - bounds[c] < w * 0.15) return null;
+    }
+    return { bands: bands, cuts: cuts };
+  }
+
+  // 横版多页分页：两栏/三栏稿纸拍在一张横图里时必须先竖向切成单栏页，
   // 否则整图一次请求超出视觉模型输出上限（1024 tokens），后半截文字会丢失。
-  // 中缝必须足够空白且落在画面中部 28%~72% 之间，否则视为单页不动。
-  // 竖切前先把顶部通栏题目区整体裁出（若有），作为独立识别单元排在最前，
-  // 否则通栏题目会被切成左右两半，碎片混进正文（split44 修复）。
+  // 栏缝轨迹由 findGutterTracks 给出（每带独立切点，随透视漂移），按带裁块、
+  // 同栏各带纵向堆叠还原成单栏页。竖切前先把顶部通栏题目区整体裁出（若有），
+  // 作为独立识别单元排在最前，否则通栏题目会被切成两半（split44 修复）。
   function splitPages(dataUrl, w, h) {
     var one = [{ url: dataUrl, w: w, h: h }];
     return new Promise(function (resolve) {
-      if (w < h * 1.05) { resolve(one); return; } // 竖版/近方形不可能是双页
+      if (w < h * 1.05) { resolve(one); return; } // 竖版/近方形不可能是多栏
       var img = new Image();
       img.onload = function () {
         try {
@@ -645,12 +732,12 @@
           bctx.fillStyle = '#fff';
           bctx.fillRect(0, 0, w, h);
           bctx.drawImage(img, 0, 0);
-          var gap = findBlankCol(base, Math.round(w / 2), Math.round(w * 0.16));
-          var cleanMax = Math.max(8, Math.round(h * 0.01));
-          if (gap.dark > cleanMax || gap.x < w * 0.28 || gap.x > w * 0.72) { resolve(one); return; }
+          var tracks = findGutterTracks(base);
+          if (!tracks) { resolve(one); return; }
           var pad = 14, out = [];
+          var midCut = tracks.cuts[Math.floor(tracks.cuts.length / 2)];
           // 顶部通栏题目区整体裁出，排在识别队列最前（不参与竖切）
-          var headBottom = findHeaderBottom(base, gap.x, h * 0.45);
+          var headBottom = findHeaderBottom(base, midCut, h * 0.45);
           var bodyY = headBottom > 0 ? headBottom : 0;
           var bodyH = h - bodyY;
           if (headBottom > 0) {
@@ -665,17 +752,51 @@
             hctx.drawImage(base, 0, 0, w, headBottom, pad, pad, hw2, hh2);
             out.push({ url: hc.toDataURL('image/jpeg', 0.9), w: hc.width, h: hc.height });
           }
-          [[0, gap.x], [gap.x, w]].forEach(function (rg) {
-            var cw = rg[1] - rg[0];
-            if (cw < w * 0.2) return;
-            var cc = document.createElement('canvas');
-            cc.width = cw + pad * 2; cc.height = bodyH + pad * 2;
-            var cctx = cc.getContext('2d');
-            cctx.fillStyle = '#fff';
-            cctx.fillRect(0, 0, cc.width, cc.height);
-            cctx.drawImage(base, rg[0], bodyY, cw, bodyH, pad, pad, cw, bodyH);
-            out.push({ url: cc.toDataURL('image/jpeg', 0.9), w: cc.width, h: cc.height });
+          // 按栏缝轨迹逐带裁块，同栏各带纵向堆叠成单栏页（左→中→右即阅读顺序）。
+          // 每带的实际切点取「离聚类中心最近的带内候选」，该带缺失候选时用聚类中心。
+          var nCol = tracks.cuts.length + 1;
+          var colCanvases = [], colCtx = [], colY = [];
+          var ci;
+          for (ci = 0; ci < nCol; ci++) {
+            var cw = Math.round(w / nCol) + pad * 2 + 32; // 栏宽估值 + 漂移余量
+            var cv = document.createElement('canvas');
+            cv.width = cw; cv.height = bodyH + pad * 2;
+            var cx2 = cv.getContext('2d');
+            cx2.fillStyle = '#fff'; cx2.fillRect(0, 0, cv.width, cv.height);
+            colCanvases.push(cv); colCtx.push(cx2); colY.push(pad);
+          }
+          tracks.bands.forEach(function (b) {
+            var sy0 = Math.max(b.y0, bodyY);
+            if (b.y1 <= bodyY || b.y1 - sy0 < 24) return;
+            // 该带的分栏切点
+            var xs = tracks.cuts.map(function (mean) {
+              var best = null;
+              b.cuts.forEach(function (cx) {
+                if (Math.abs(cx - mean) <= w * 0.03 && (best === null || Math.abs(cx - mean) < Math.abs(best - mean))) best = cx;
+              });
+              return best === null ? mean : best;
+            });
+            var bnds = [0].concat(xs).concat([w]);
+            for (var c2 = 0; c2 < nCol; c2++) {
+              var pw = Math.round(bnds[c2 + 1] - bnds[c2]);
+              if (pw < 20) continue;
+              var ph = b.y1 - sy0;
+              if (colY[c2] + ph > colCanvases[c2].height - pad) continue;
+              colCtx[c2].drawImage(base, bnds[c2], sy0, pw, ph,
+                Math.round((colCanvases[c2].width - pw) / 2), colY[c2], pw, ph);
+              colY[c2] += ph;
+            }
           });
+          for (ci = 0; ci < nCol; ci++) {
+            var usedH = colY[ci] + pad;
+            if (usedH < 80) continue; // 空栏跳过
+            var fin = document.createElement('canvas');
+            fin.width = colCanvases[ci].width; fin.height = usedH;
+            var fctx = fin.getContext('2d');
+            fctx.fillStyle = '#fff'; fctx.fillRect(0, 0, fin.width, fin.height);
+            fctx.drawImage(colCanvases[ci], 0, 0);
+            out.push({ url: fin.toDataURL('image/jpeg', 0.9), w: fin.width, h: fin.height });
+          }
           resolve(out.length >= 2 ? out : one);
         } catch (e) { resolve(one); }
       };
