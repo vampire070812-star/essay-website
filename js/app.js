@@ -553,6 +553,7 @@
       tipEl.classList.remove('show');
       textEl.focus();
       runProofread(bodyText);
+      });
     }).catch(function (err) {
       if (seq !== uploadSeq) return;
       resetProof();
