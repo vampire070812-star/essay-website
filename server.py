@@ -241,6 +241,32 @@ ANALYZE_DAILY_LIMIT = int(os.environ.get("ANALYZES_PER_DAY", "60") or "0")
 AUTH_WINDOW_SEC = 600
 AUTH_MAX_ATTEMPTS = 20
 
+# ---- 安全防护 ----
+# AI 类接口全局并发上限：超出立即 429，防止突发流量在线程模型下耗尽内存/CPU
+AI_CONCURRENCY = int(os.environ.get("AI_CONCURRENCY", "16") or "0")
+_ai_slots = threading.BoundedSemaphore(AI_CONCURRENCY) if AI_CONCURRENCY > 0 else None
+CONN_TIMEOUT = 60  # 单连接 socket 读超时（秒），缓解慢速连接（slowloris）长期占线程
+
+# 内容安全策略：本站页面只加载同源资源及白名单 CDN（mammoth/pdf.js/tesseract.js 在线加载）
+CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://cdn.jsdmirror.com https://fastly.jsdelivr.net "
+    "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; "
+    "worker-src 'self' blob: https://cdn.jsdmirror.com https://fastly.jsdelivr.net "
+    "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com; "
+    "connect-src 'self' https://registry.npmmirror.com https://cdn.jsdmirror.com "
+    "https://fastly.jsdelivr.net https://cdn.jsdelivr.net https://cdnjs.cloudflare.com "
+    "https://unpkg.com https://ghproxy.net https://raw.githubusercontent.com "
+    "https://tessdata.projectnaptha.com; "
+    "img-src 'self' data: blob:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self' data:; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
 # ---- 阿里云短信验证码登录（全部为可选环境变量，未配置则短信入口不可用）----
 ALIYUN_SMS_AK = os.environ.get("ALIYUN_SMS_ACCESS_KEY_ID", "").strip()
 ALIYUN_SMS_SK = os.environ.get("ALIYUN_SMS_ACCESS_KEY_SECRET", "").strip()
@@ -429,33 +455,40 @@ def db_get_user(uid):
         return db.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
 
 
+def _hash_session_token(token):
+    """会话 token 只存 SHA-256 摘要：即使数据库泄露也无法直接冒用会话。"""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def db_create_session(uid):
     token = secrets.token_urlsafe(32)
+    token_h = _hash_session_token(token)
     now = int(time.time())
     with db_lock:
         db.execute(
             "INSERT INTO sessions(token, user_id, created_at, expires_at, last_seen) VALUES(?,?,?,?,?)",
-            (token, uid, now, now + SESSION_TTL, now))
+            (token_h, uid, now, now + SESSION_TTL, now))
         db.commit()
     return token
 
 
 def db_get_session_user(token):
+    token_h = _hash_session_token(token)
     now = int(time.time())
     with db_lock:
         row = db.execute(
             "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
-            "WHERE s.token=? AND s.expires_at>?", (token, now)).fetchone()
+            "WHERE s.token=? AND s.expires_at>?", (token_h, now)).fetchone()
         if row:
             db.execute("UPDATE sessions SET last_seen=? WHERE token=? AND last_seen<?",
-                       (now, token, now - 600))
+                       (now, token_h, now - 600))
             db.commit()
         return row
 
 
 def db_delete_session(token):
     with db_lock:
-        db.execute("DELETE FROM sessions WHERE token=?", (token,))
+        db.execute("DELETE FROM sessions WHERE token=?", (_hash_session_token(token),))
         db.commit()
 
 
@@ -1644,19 +1677,47 @@ class LLMError(Exception):
 class Handler(BaseHTTPRequestHandler):
     server_version = "EssayGrader/2.0"
 
+    def setup(self):
+        # 读超时：慢速/挂起连接最多占线程 CONN_TIMEOUT 秒
+        # 注意此时 self.connection 尚未创建，须直接操作 self.request（原始 socket）
+        self.request.settimeout(CONN_TIMEOUT)
+        super().setup()
+
+    def version_string(self):
+        return "EssayGrader"  # Server 响应头不暴露 Python 版本
+
     def log_message(self, fmt, *args):
         pass  # 静默；需要调试可改为 print(args)
+
+    def _security_headers(self):
+        hs = [
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
+            ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+            ("Content-Security-Policy", CSP),
+        ]
+        if self._is_https():
+            hs.append(("Strict-Transport-Security",
+                       "max-age=15552000; includeSubDomains"))
+        return hs
 
     def _send_json(self, obj, status=200, extra_headers=None):
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        for k, v in self._security_headers():
+            self.send_header(k, v)
         for k, v in (extra_headers or []):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
+
+    def send_error(self, code, message=None, explain=None):
+        """统一 JSON 错误响应：不输出默认 HTML 错误页，避免泄露服务器指纹。"""
+        self._send_json({"ok": False, "code": "http_%d" % code,
+                         "message": message or "Not Found"}, code)
 
     def _api_error(self, code, message, status=400):
         self._send_json({"ok": False, "code": code, "message": message}, status)
@@ -1664,7 +1725,10 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------- 账号会话辅助 ----------------
 
     def _is_https(self):
-        return self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https"
+        h = getattr(self, "headers", None)
+        if not h:
+            return False
+        return h.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https"
 
     def _cookie(self, name):
         raw = self.headers.get("Cookie", "")
@@ -1676,9 +1740,13 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def _client_ip(self):
+        # 取 XFF 最右侧：由离服务器最近的可信代理（Render/网关）写入，
+        # 客户端可伪造左侧值，取最右可防止伪造 IP 绕过限流
         xff = self.headers.get("X-Forwarded-For", "")
-        ip = xff.split(",")[0].strip()
-        return ip or (self.client_address[0] if self.client_address else "unknown")
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+        return self.client_address[0] if self.client_address else "unknown"
 
     def _current_user(self):
         token = self._cookie(SESSION_COOKIE)
@@ -1717,9 +1785,25 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def _send_static(self, rel):
-        rel = rel.lstrip("/") or "index.html"
-        path = os.path.normpath(os.path.join(BASE_DIR, *rel.split("/")))
-        if not path.startswith(BASE_DIR) or not os.path.isfile(path):
+        # 先 URL 解码。静态资源实行白名单：仅根目录 index.html/styles.css
+        # 与 js/ 下的 .js 文件可访问；.env、server.py、data/、deploy/ 等一律 404
+        rel = urllib.parse.unquote(rel).lstrip("/") or "index.html"
+        parts = rel.split("/")
+        if len(parts) == 1 and parts[0] in ("index.html", "styles.css", "favicon.ico"):
+            allowed = True
+        elif len(parts) == 2 and parts[0] == "js" and parts[1].endswith(".js"):
+            allowed = True
+        else:
+            allowed = False
+        # 组件含空/. ../反斜杠/点开头（隐藏文件）一律拒绝
+        if any(p in ("", ".", "..") or "\\" in p or p.startswith(".") for p in parts):
+            allowed = False
+        path = os.path.normpath(os.path.join(BASE_DIR, *parts))
+        try:
+            inside = os.path.commonpath([path, BASE_DIR]) == BASE_DIR
+        except ValueError:
+            inside = False
+        if not allowed or not inside or not os.path.isfile(path):
             self.send_error(404, "Not Found")
             return
         ext = os.path.splitext(path)[1].lower()
@@ -1734,14 +1818,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-cache")
+        for k, v in self._security_headers():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
 
     def do_OPTIONS(self):
+        # 前后端同源部署，不开放跨域访问
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        for k, v in self._security_headers():
+            self.send_header(k, v)
         self.end_headers()
 
     def do_GET(self):
@@ -1784,6 +1871,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def _read_body(self, limit=MAX_BODY):
+        # 仅接受 JSON 提交：配合 SameSite Cookie 进一步压缩 CSRF 面
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._send_json({"ok": False, "code": "bad_content_type",
+                             "message": "请求格式不正确"}, 415)
+            return None
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
@@ -1821,33 +1914,46 @@ class Handler(BaseHTTPRequestHandler):
             if data is not None:
                 self.handle_draft_save(data)
             return
-        if path == "/api/ocr":
-            data = self._read_body(OCR_MAX_BODY)
-            if data is not None:
-                self.handle_ocr(data)
-            return
-        if path == "/api/proofread":
-            data = self._read_body(120 * 1024)
-            if data is not None:
-                self.handle_proofread(data)
-            return
-        if path == "/api/extract-title":
-            data = self._read_body(120 * 1024)
-            if data is not None:
-                self.handle_extract_title(data)
-            return
-        if path not in ("/api/grade", "/api/analyze"):
-            self.send_error(404, "Not Found")
-            return
-        data = self._read_body()
-        if data is None:
-            return
-        api_key, base_url, model = self._resolve_cfg(data)
 
-        if path == "/api/analyze":
-            self.handle_analyze(data, api_key, base_url, model)
-        else:
-            self.handle_grade(data, api_key, base_url, model)
+        # AI 类接口：全局并发上限，超出快速失败 429，避免线程无限膨胀拖垮实例
+        ai_paths = ("/api/ocr", "/api/proofread", "/api/extract-title",
+                    "/api/grade", "/api/analyze")
+        is_ai = path in ai_paths
+        if is_ai and _ai_slots is not None and not _ai_slots.acquire(blocking=False):
+            self._send_json({"ok": False, "code": "server_busy",
+                             "message": "当前使用人数较多，请稍等片刻再试。"}, 429)
+            return
+        try:
+            if path == "/api/ocr":
+                data = self._read_body(OCR_MAX_BODY)
+                if data is not None:
+                    self.handle_ocr(data)
+                return
+            if path == "/api/proofread":
+                data = self._read_body(120 * 1024)
+                if data is not None:
+                    self.handle_proofread(data)
+                return
+            if path == "/api/extract-title":
+                data = self._read_body(120 * 1024)
+                if data is not None:
+                    self.handle_extract_title(data)
+                return
+            if path not in ("/api/grade", "/api/analyze"):
+                self.send_error(404, "Not Found")
+                return
+            data = self._read_body()
+            if data is None:
+                return
+            api_key, base_url, model = self._resolve_cfg(data)
+
+            if path == "/api/analyze":
+                self.handle_analyze(data, api_key, base_url, model)
+            else:
+                self.handle_grade(data, api_key, base_url, model)
+        finally:
+            if is_ai and _ai_slots is not None:
+                _ai_slots.release()
 
     # ---------------- 注册 / 登录 / 退出 ----------------
 
@@ -2475,7 +2581,12 @@ def main():
     seeded_new, seeded_upd = seed_trial_accounts()
     if seeded_new or seeded_upd:
         print(" 试运行账号已就绪：新建 %d 个，重置 %d 个" % (seeded_new, seeded_upd))
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True       # 主进程退出时不等孤儿线程
+        request_queue_size = 128    # 监听积压队列：突发并发时不至于直接拒连
+
+    server = Server((HOST, PORT), Handler)
     local_ip = lan_ip()
     on_cloud = bool(os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
                     or os.environ.get("KOYEB"))
