@@ -21,6 +21,7 @@
 
 import base64
 import hashlib
+import math
 import hmac
 import json
 import os
@@ -1640,6 +1641,79 @@ def is_subsequence(short, longer):
     return all(ch in it for ch in short)
 
 
+# 公开混淆集（ocr_confusion.json，由 pycorrector 同音字表/形近字表 +
+# wdimmy/Automatic-Corpus-Generation 混淆集合合并成）：char -> 易混淆字串。
+# 用于判断「原词→建议词」的每个不同字符位是否属于已知的形近/音近认错。
+OCR_CONFUSION = {}
+try:
+    with open(os.path.join(BASE_DIR, "ocr_confusion.json"), encoding="utf-8") as _f:
+        OCR_CONFUSION = json.load(_f)
+except Exception:
+    OCR_CONFUSION = {}
+
+
+def confusable_pair(a, b):
+    """a→b 是否至少有一个不同字符位是已知的形近/音近混淆对。"""
+    return any(cb in OCR_CONFUSION.get(ca, "") or ca in OCR_CONFUSION.get(cb, "")
+               for ca, cb in zip(a, b) if ca != cb)
+
+
+def sentence_window(text, pos, span):
+    """取 pos 处所在的完整句子（按句号/问号/叹号/分号/换行切），供挖空判断用。"""
+    s = pos
+    while s > 0 and text[s - 1] not in "。！？!?；;\n":
+        s -= 1
+    e = pos + span
+    while e < len(text) and text[e] not in "。！？!?；;\n":
+        e += 1
+    return text[s:e]
+
+
+def cloze_judge(sentence, orig, sug):
+    """挖空判断：把 orig 挖掉，让语言模型只凭上下文在 A=原词 / B=建议词 之间选择，
+    用返回的 token 概率（相当于比较两种填法的语言模型概率）判定哪种更可能是原本写的字。
+    模型看不到「哪个词出现在句子里」，避免了复核时被原词带偏。
+    返回 'A' / 'B' / ''（失败或拿不准）。"""
+    blanked = sentence.replace(orig, "＿" * len(orig), 1)
+    if blanked == sentence:
+        return ""
+    prompt = (
+        "下面是一句从手写作文照片中识别出的文字，其中 ＿ 处有一个词缺失。"
+        "请只根据上下文判断：缺失处原本最可能是哪个词？\n"
+        "A.「%s」\nB.「%s」\n"
+        "句子：%s\n"
+        "只输出一个字母 A 或 B，不要输出其他任何内容。" % (orig, sug, blanked))
+    payload = {
+        "model": PROOFREAD_MODEL, "temperature": 0, "max_tokens": 4,
+        "logprobs": True, "top_logprobs": 20,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    url = PROOFREAD_BASE_URL.rstrip("/") + "/chat/completions"
+    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode(),
+                                 method="POST")
+    req.add_header("Content-Type", "application/json; charset=utf-8")
+    req.add_header("Authorization", "Bearer " + PROOFREAD_API_KEY)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+        toks = (raw["choices"][0].get("logprobs") or {}).get("content") or []
+        if not toks:
+            return ""
+        pa = pb = 0.0
+        for t in toks[0].get("top_logprobs") or []:
+            tok = t["token"].strip().strip("。. ").upper()
+            p = math.exp(t["logprob"])
+            if tok == "A":
+                pa += p
+            elif tok == "B":
+                pb += p
+        if pa == 0.0 and pb == 0.0:
+            return ""
+        return "A" if pa > pb else "B"
+    except Exception:
+        return ""
+
+
 def one_edit_apart(longer, shorter):
     """长串删去恰好一个字后，与短串逐位比较最多错 1 个字。
     OCR 的「多字/漏字」错常伴随同位置认错字（享受味着 → 意味着：删「享」后
@@ -2659,6 +2733,31 @@ class Handler(BaseHTTPRequestHandler):
             retry = [c for c in cands if c["id"] not in verdicts]
             if retry:
                 _collect(_run_verify([[c] for c in retry]))
+
+        # 定稿：先确定每条候选最终的 suggest（复核修正词优先）
+        for c in cands:
+            c["final_suggest"] = c["suggest"]
+            if c["id"] in verdicts:
+                ok, fix = verdicts[c["id"]]
+                if ok and valid_pair(c["original"], fix) and \
+                        (len(c["suggests"]) == 1 or fix in c["suggests"] or c["hits"] == 1):
+                    c["final_suggest"] = fix
+
+        # 语言模型概率辅助（挖空判断）：复核通过的候选再补一道——把原词挖掉，
+        # 让模型只凭上下文比较「原词 vs 建议词」哪个更可能是原本写的字。
+        # 只有模型也选建议词才升“确定”；选原词说明原词本就读得通，降回“可疑”。
+        cloze = {}
+        cloze_jobs = [c for c in cands
+                      if c["id"] in verdicts and verdicts[c["id"]][0]]
+        if cloze_jobs:
+            def _cloze_one(c):
+                return c["id"], cloze_judge(
+                    sentence_window(body, c["pos"], len(c["original"])),
+                    c["original"], c["final_suggest"])
+            with ThreadPoolExecutor(max_workers=min(8, len(cloze_jobs))) as ex:
+                for cid, pick in ex.map(_cloze_one, cloze_jobs):
+                    cloze[cid] = pick
+
         items = []
         for c in cands:
             if c["id"] in verdicts:
@@ -2667,11 +2766,19 @@ class Handler(BaseHTTPRequestHandler):
                 # 两轮以上都报的保留为“可疑”，留给用户自行判断
                 if not ok and c["hits"] < 2:
                     continue
-                suggest = c["suggest"]
-                if ok and valid_pair(c["original"], fix) and \
-                        (len(c["suggests"]) == 1 or fix in c["suggests"] or c["hits"] == 1):
-                    suggest = fix
-                level = "high" if ok else "low"
+                suggest = c["final_suggest"]
+                if not ok:
+                    level = "low"
+                else:
+                    pick = cloze.get(c["id"], "")
+                    if pick == "B":
+                        level = "high"
+                    elif pick == "A":
+                        level = "low"
+                    else:
+                        # 挖空接口不可用时用混淆集兜底：不同字符位落在已知
+                        # 形近/音近混淆对里才可升“确定”
+                        level = "high" if confusable_pair(c["original"], suggest) else "low"
             else:
                 # 审核请求整体失败时回退到“多轮一致”判定，不影响基本可用性
                 agreed = c["hits"] >= 2 and len(c["suggests"]) == 1
