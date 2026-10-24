@@ -33,6 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -178,38 +179,76 @@ PROOFREAD_MODEL = (
 PROOFREAD_MAX_TEXT = 6000
 
 PROOFREAD_SYSTEM_PROMPT = (
-    "你是中文手写作文的 OCR 校对员。用户会给你一段手写作文照片的机器转写文本，"
-    "其中可能有少量因手写字形相近、拍照模糊造成的识别错字。"
-    "你的唯一目的：找出因手写识别认错字导致的错误，帮助用户快速改回原本写的字。"
-    "绝对不是帮用户修改作文——只有“识别会产生的错误”才报，作文本身写得如何与你无关。\n"
-    "请分两档找出错字，输出 JSON："
-    "{\"items\":[{\"quote\":\"原文片段\",\"original\":\"错词\",\"suggest\":\"建议改为\",\"level\":\"high 或 low\"}]}。\n"
-    "第一档 level=\"high\"（确定的识别错字）：你确定原文此处是识别错误——原词在中文里不成词、"
-    "或在此语境语义不通，而把它换成一个【字形或读音相近】的词后句意立刻通顺，"
-    "即用户手写时写的几乎肯定是后者（例如：伴件→软件、软伴→软件、限多→限制、"
-    "内客→内容、机戒→机械、出板→出版）。最多 12 处。\n"
-    "第二档 level=\"low\"（疑似识别错误，三四成把握就报）：手写连笔、拍照模糊时认错字"
-    "非常普遍。只要你觉得“这个词读着有点怪，换成另一个【字形或读音沾边】的词会更通顺”，"
-    "哪怕只有三四成把握、哪怕不能排除它就是作者原词，也请放进这一档，由用户自行决定改不改。"
-    "常见情形包括：①形近字（部件混淆如 衤/礻、氵/冫、贝/见、日/曰、末/未、土/士、厂/广、"
-    "己/已、人/入，以及整体字形相近的单字或双字词，即使两个字都不一样也可以报蓝）；"
-    "②读音相同或相近的字；③多字、漏字造成的别扭（例如 机戒械→机械、子成材→孩子成材）。"
-    "这一档宁多勿漏，但为避免打扰整体不要超过 15 处；仍严禁与字形、读音都不沾边的语义替换。"
-    "不要因为怕报错而漏报：low 档本来就是供用户参考的候选，报错代价很小，漏掉则要用户自己逐字找。"
-    "请把所有“不成词或读着别扭、且存在更通顺的形近/音近/只差一个字候选”的位置全部列出来，"
-    "不要因为不确定就放弃。\n"
-    "两档共同要求：\n"
-    "1. 红档的 suggest 必须与 original 字形或读音明显相近；蓝档只要字形或读音沾边即可"
-    "（也允许多/漏恰好一个字的情形）。任何一档都严禁意思不同且字形读音都不沾边的替换——"
-    "例如绝不能把「齿轮」改成「螺丝」、把「宿命」改成「命运」：那不是识别错误，"
-    "是在改写用户的作文，违背本功能的初衷；\n"
-    "2. 只报识别错字：不挑作者自己写的错别字、语病、标点问题、用词好坏，不做润色建议；"
-    "不报告人名、地名、专有名词、文言表达和创意化用词；\n"
-    "3. quote 必须从原文中逐字复制（连同该词前后各 6~12 个字），不得改动任何字和标点，"
-    "且要保证 quote 在全文中只出现一次；original 是其中的错词；\n"
-    "4. original 与 suggest 各不超过 6 个字、必须不同、字数差不超过 1；按在文中出现的先后顺序。\n"
-    "如果通读全文确实没有发现任何疑似识别错误，items 返回空数组 []。\n"
-    "只输出 JSON，不要输出任何其他内容。"
+    "你是中文手写作文的 OCR 校对员。给你的是手写作文照片的机器转写文本。"
+    "文本里有若干因字形相近、拍照模糊而认错的字——例如 答案 被认成 糖果、诚然 被认成 城堡、"
+    "强调 被认成 强国、意味着 被认成 享受味着、自己 被认成 自觉、我们 被认成 物力。"
+    "你的唯一任务：把这些识别错字找出来，帮用户改回原本写的字。"
+    "这不是改作文——作者自己写的错别字、语病、用词好坏、标点一律不管，不做任何润色。\n"
+    "工作方法（必须严格执行）：\n"
+    "1. 从头到尾【逐句】读，每读完一句问自己两个问题：\n"
+    "   (a) 这句里有没有一个词，在上下文语境中根本讲不通、搭配不成立、明显不像正常中文？\n"
+    "   (b) 把它换成一个【字形相近或读音相同/相近】的词后，这句是不是立刻通顺？\n"
+    "   两个答案都是“是”，就报出来。不要因为整体大意能猜懂就跳过局部错词。\n"
+    "2. 高频错处务必逐处检查：句首连接词与判断词（诚然/当然/答案/看似/倘若 常被认成 "
+    "城堡/糖果/看来/堪似/倘若）、第一人称与虚词（我们/自己/亦足/足以 常被认成 "
+    "物力/自觉/就是/就足以）、双字词里认错半个字（强调→强国、轨迹→契机、付出→付山）。\n"
+    "3. 只要“换了之后明显更通顺、且字形或读音沾边”，哪怕只有三四成把握也要报。"
+    "分两档：level=\"high\" 确定是识别错字；level=\"low\" 疑似，仅作候选供用户判断。\n"
+    "4. 严禁报与字形、读音都不沾边的语义替换（绝不能把 齿轮 改成 螺丝、把 宿命 改成 命运："
+    "那不是识别错误，是在改写用户的作文）。不报人名、地名、专有名词、文言表达和作者刻意的创意用词。\n"
+    "输出 JSON：{\"items\":[{\"quote\":\"原文片段\",\"original\":\"错词\",\"suggest\":\"建议改为\",\"level\":\"high 或 low\"}]}。\n"
+    "quote 必须从原文逐字复制（连同该词前后各 6~12 个字，不得改动任何字和标点），"
+    "original 是 quote 里的那个错词。original 与 suggest 各不少于 2 个字、不超过 6 个字、"
+    "必须不同、字数差不超过 1。按在文中出现的先后顺序排列。"
+    "通读全文确实没有疑似识别错误才返回空数组。只输出 JSON，不要输出任何其他内容。"
+)
+
+# 第二轮：换扫描顺序，降低与第一轮同源漏报。两轮结果取交集后升为“确定”。
+PROOFREAD_SECOND_PASS_PROMPT = PROOFREAD_SYSTEM_PROMPT + (
+    "\n【第二轮·倒序复查】请从最后一句开始，逐句往回读。"
+    "这一轮重点扫描这几类容易被忽略的小词，每处都要停下来确认：\n"
+    "① 段首、分句首的连接词与判断词：诚然/当然/看似/倘若/答案/因此/然而/不过；\n"
+    "② 人称、指示与虚词：我们/自己/它/他们/足以/亦足/即使/于是；\n"
+    "③ 数量词与固定搭配：一分子/一部分/一瞬间/一件事/一种可能；\n"
+    "④ 句子读起来别扭时，试着删掉或替换其中一个小词，看是否立刻通顺。\n"
+    "不要因为第一轮已经看过就跳过任何一句。"
+)
+
+# 第三轮：换视角，专攻形近/音近的“整字认错”，与前两轮互补。
+PROOFREAD_THIRD_PASS_PROMPT = PROOFREAD_SYSTEM_PROMPT + (
+    "\n【第三轮·形近音近专项】请只盯“两三个字的词是否被整体认错”。"
+    "逐词扫一遍，对每个双字、三字词组问：这两个字如果是手写连笔、拍照偏暗，"
+    "会不会被认成现在这样？例如 答案→糖果、诚然→城堡、强调→强国、自己→自觉、"
+    "我们→物力、内容→内客、机械→机戒：字形或读音都沾边。"
+    "只要沾边就报，不确定的放 low。不必重复长句分析，只逐词排查。"
+)
+
+# 审核轮：三轮扫描各自报出的候选会并集，但单轮命中不等于真错（模型容易把
+# 正常用词、作者创意表达、专有名词也报上来）。这一步拿语境逐条复核：
+# 只保留“确实是手写字形/读音认错”的，确认的升为“确定”，否掉的单轮候选直接丢弃。
+PROOFREAD_VERIFY_PROMPT = (
+    "你是手写作文 OCR 识别错误的审核员。输入是若干条候选，每条给出原文语境、"
+    "被怀疑认错的词，以及建议改成的词。请逐条判断它是否属于"
+    "「手写字形相近或读音相近导致的机器识别错误」。\n"
+    "只有同时满足以下三条才判 ok=true：\n"
+    "① 把原词放回本句，语义明显不成立、搭配错误或与上下文自相矛盾"
+    "（不是文采差，也不是作者本人用词不当）；\n"
+    "② 换成建议词后，该词所在的搭配或小句明显通顺；同一句里可能还有别的识别错字，"
+    "不要求整句因这一处替换就完全通顺；\n"
+    "③ 原词与建议词在字形或读音上沾边（手写连笔、拍照模糊时容易认混）；"
+    "或者原词在本句根本不成词、明显是一串乱码，而建议词是常见且贴切的词。\n"
+    "判断①时看的是「这个词放在本句里能否讲通」，不是「这个词本身是否常见」："
+    "原词哪怕是很常见的词，只要在本句明显搭配错误、前后矛盾，仍应 ok=true"
+    "（常见词恰恰常是手写字形被认混的结果，如 城堡→诚然、强国→强调）。\n"
+    "以下情况一律 ok=false：原词在本句中讲得通，建议词只是同义替换或近义改写"
+    "（如 宿命→生命、诚然→固然、机遇→机会、咬合→契合、发展→开展）；"
+    "建议词只是让句子更漂亮、更书面或更符合你的偏好；"
+    "原词是人名、地名、书名、专有名词或作者刻意的创意用词；"
+    "原词在本句讲得通，却被换成字形读音毫不相干的另一个词；句子只是行文啰嗦。\n"
+    "如果 ok=true 但建议词不对或不完整，请在 fix 里写出你认为正确的词（2~6 字）；"
+    "拿不准就留空字符串。\n"
+    "输出 JSON：{\"verdicts\":[{\"id\":1,\"ok\":true,\"fix\":\"\"}]}，"
+    "输入里每个 id 都必须有且只有一条，按 id 升序。只输出 JSON，不要其他内容。"
 )
 
 
@@ -1601,6 +1640,113 @@ def is_subsequence(short, longer):
     return all(ch in it for ch in short)
 
 
+def one_edit_apart(longer, shorter):
+    """长串删去恰好一个字后，与短串逐位比较最多错 1 个字。
+    OCR 的「多字/漏字」错常伴随同位置认错字（享受味着 → 意味着：删「享」后
+    受≠意 一处不同），单纯子序列判定会把这类真实错字全部误杀。"""
+    if len(longer) - len(shorter) != 1:
+        return False
+    for i in range(len(longer)):
+        rest = longer[:i] + longer[i + 1:]
+        if sum(1 for a, b in zip(rest, shorter) if a != b) <= 1:
+            return True
+    return False
+
+
+def valid_pair(original, suggest):
+    """original → suggest 是否是合理的“认错字”替换。
+    - 各 2~6 字、必须不同、字数差 ≤1
+    - 等长时最多错 2 个字；差 1 字时须能对齐（允许同时认错一个字）
+    - 纯删字只接受“删掉的是重复字”（才才会→才会），否则视为无意义"""
+    if not (2 <= len(original) <= 6 and 2 <= len(suggest) <= 6 and original != suggest):
+        return False
+    lo, ls = len(original), len(suggest)
+    if abs(lo - ls) > 1:
+        return False
+    if lo == ls:
+        ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
+        return 0 < ndiff <= 2
+    short, longer = (original, suggest) if lo < ls else (suggest, original)
+    if not (is_subsequence(short, longer) or one_edit_apart(longer, short)):
+        return False
+    for i in range(len(longer)):
+        if longer[:i] + longer[i + 1:] == short:
+            repeated = ((i > 0 and longer[i - 1] == longer[i]) or
+                        (i + 1 < len(longer) and longer[i + 1] == longer[i]))
+            return repeated
+    return True
+
+
+def filter_proof_items(raw_items, text):
+    """校验并归一化模型返回的校对条目（只判合法性，不调整置信档位）。
+    quote 必须真实出现在原文中，且包含 original。"""
+    out, seen = [], set()
+    if not isinstance(raw_items, list):
+        return out
+    for it in raw_items:
+        if not isinstance(it, dict):
+            continue
+        quote = str(it.get("quote") or "").strip()
+        original = str(it.get("original") or "").strip()
+        suggest = str(it.get("suggest") or "").strip()
+        level = "low" if str(it.get("level") or "").strip() == "low" else "high"
+        if not valid_pair(original, suggest):
+            continue
+        if not quote or len(quote) > 40 or original not in quote or quote not in text:
+            continue
+        pos = text.find(quote) + quote.index(original)
+        if (pos, original) in seen:
+            continue
+        seen.add((pos, original))
+        out.append({"quote": quote, "original": original, "pos": pos,
+                    "suggest": suggest, "level": level})
+    return out
+
+
+def split_proof_chunks(text, target=450, max_n=4):
+    """把待校对文本按段落切成若干块，每块约 target 字。
+    模型一次性读长文时只扫个大概、漏报严重；分块后每块都能被逐句细看。
+    返回 [(起始偏移, 文本块), ...]，偏移用于把块内位置换算回全文位置。"""
+    if len(text) <= target:
+        return [(0, text)]
+    units = [(m.start(), m.end()) for m in re.finditer(r"[^\n]+", text)]
+    # 超长段落（OCR 常把整段写成一行）再按句子硬切
+    spans = []
+    for s, e in units:
+        para = text[s:e]
+        if len(para) <= target:
+            spans.append((s, e))
+            continue
+        cur_s, pos = s, 0
+        for sent in re.split(r"(?<=[。！？!?；;])", para):
+            if not sent:
+                continue
+            if pos and pos + len(sent) > target:
+                spans.append((cur_s, s + pos))
+                cur_s = s + pos
+            pos += len(sent)
+        if s + pos > cur_s:
+            spans.append((cur_s, s + pos))
+    # 相邻段落装块，块内容直接取原文切片，保证块内偏移与全文一致
+    chunks, cur_s, cur_e = [], 0, 0
+    for s, e in spans:
+        if cur_e > cur_s and (e - cur_s) > target:
+            chunks.append((cur_s, text[cur_s:cur_e]))
+            cur_s, cur_e = s, e
+        elif cur_e > cur_s:
+            cur_e = e
+        else:
+            cur_s, cur_e = s, e
+    if cur_e > cur_s:
+        chunks.append((cur_s, text[cur_s:cur_e]))
+    # 块数超过上限时把最前面的相邻块合并，保证请求数可控
+    while len(chunks) > max_n:
+        o1, c1 = chunks[0]
+        o2, c2 = chunks[1]
+        chunks[0:2] = [(o1, c1 + text[len(c1) + o1:o2] + c2)]
+    return chunks or [(0, text)]
+
+
 def call_vision_llm(api_key, base_url, model, system_prompt, data_url, max_tokens=4096, user_hint=None):
     """调用 OpenAI 兼容视觉模型转写图片文字。返回纯文本；失败抛 LLMError。"""
     url = base_url.rstrip("/") + "/chat/completions"
@@ -2401,68 +2547,152 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
-        try:
-            rep = call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
-                           PROOFREAD_SYSTEM_PROMPT,
-                           "待校对文本：\n" + text[:PROOFREAD_MAX_TEXT], 1200, temperature=0.3)
-        except LLMError as e:
+        body = text[:PROOFREAD_MAX_TEXT]
+        # 分块 + 三视角并发：长文整篇一次读会漏报，切块后逐块细看；同一块用三种
+        # 扫描方式各跑一次，≥2 轮都检出的条目可信度高，升为“确定”，只有 1 轮检出的
+        # 降为“可选”——既提高召回，也不把作者原本写对的词误判成错字。
+        jobs = []
+        for off, chunk in split_proof_chunks(body):
+            jobs.append((off, chunk, PROOFREAD_SYSTEM_PROMPT))
+            if len(chunk) >= 80:
+                jobs.append((off, chunk, PROOFREAD_SECOND_PASS_PROMPT))
+                jobs.append((off, chunk, PROOFREAD_THIRD_PASS_PROMPT))
+
+        def _one(job):
+            off, chunk, prompt = job
+            return off, chunk, call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
+                                        prompt, "待校对文本：\n" + chunk, 2000, temperature=0.2)
+
+        results, first_err = [], None
+        with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as ex:
+            futs = [ex.submit(_one, j) for j in jobs]
+            for f in futs:
+                try:
+                    results.append(f.result())
+                except LLMError as e:
+                    if first_err is None:
+                        first_err = e
+        if not results:
+            e = first_err or LLMError("unavailable", "大模型服务暂不可用")
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
             return
 
-        items, seen = [], set()
-        raw_items = rep.get("items") if isinstance(rep, dict) else None
-        if isinstance(raw_items, list):
-            for it in raw_items:
-                if not isinstance(it, dict):
+        merged = {}
+        order = []
+        for off, chunk, rep in results:
+            raw_items = rep.get("items") if isinstance(rep, dict) else None
+            for it in filter_proof_items(raw_items, chunk):
+                key = (off + it["pos"], it["original"])  # 按全文位置对齐，各轮取窗不同也能合并
+                if key not in merged:
+                    merged[key] = {"quote": it["quote"], "original": it["original"],
+                                   "suggest": it["suggest"], "hits": 1,
+                                   "model_high": it["level"] == "high",
+                                   "suggests": {it["suggest"]}}
+                    order.append(key)
                     continue
-                quote = str(it.get("quote") or "").strip()
-                original = str(it.get("original") or "").strip()
-                suggest = str(it.get("suggest") or "").strip()
-                level = "low" if str(it.get("level") or "").strip() == "low" else "high"
-                # 硬校验：长度合理、quote 必须是原文连续子串且在全文中唯一、original 在 quote 内、
-                # 建议词确实与原词不同
-                if not (1 <= len(original) <= 6 and 1 <= len(suggest) <= 6 and original != suggest):
+                slot = merged[key]
+                slot["hits"] += 1
+                slot["suggests"].add(it["suggest"])
+                if it["level"] == "high":
+                    slot["model_high"] = True
+        cands = []
+        for key in order:
+            slot = merged[key]
+            cands.append({"pos": key[0], "quote": slot["quote"],
+                          "original": slot["original"], "suggest": slot["suggest"],
+                          "hits": slot["hits"], "suggests": slot["suggests"],
+                          "model_high": slot["model_high"]})
+        # 候选过多时优先保留被多轮命中的（更可能是真错），保持审核请求量可控
+        if len(cands) > 24:
+            keep = sorted(cands, key=lambda c: (-c["hits"], c["pos"]))[:24]
+            keep_keys = {(c["pos"], c["original"]) for c in keep}
+            cands = [c for c in cands if (c["pos"], c["original"]) in keep_keys]
+            cands.sort(key=lambda c: c["pos"])
+        for i, c in enumerate(cands):
+            c["id"] = i
+
+        def _verify(batch):
+            blocks = []
+            for c in batch:
+                s0 = max(0, c["pos"] - 60)
+                e0 = min(len(body), c["pos"] + len(c["original"]) + 60)
+                blocks.append("id=%d\n语境：%s\n候选：把「%s」改为「%s」"
+                              % (c["id"], body[s0:e0].replace("\n", " "),
+                                 c["original"], c["suggest"]))
+            return call_llm(PROOFREAD_API_KEY, PROOFREAD_BASE_URL, PROOFREAD_MODEL,
+                            PROOFREAD_VERIFY_PROMPT, "候选列表：\n" + "\n\n".join(blocks),
+                            1200, temperature=0)
+
+        def _collect(reps):
+            for rep in reps:
+                if not isinstance(rep, dict):
                     continue
-                lo, ls = len(original), len(suggest)
-                if level == "high":
-                    # 红档（严格）：OCR 错字是"同长度换字"——长度一致、差异字 1~2 个、
-                    # 两字以上必须共享整字（宿命→命运这类语义替换必然过不了）
-                    if lo != ls:
+                for v in rep.get("verdicts") or []:
+                    if not isinstance(v, dict):
                         continue
-                    ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
-                    if ndiff == 0 or ndiff > 2:
+                    try:
+                        vid = int(v.get("id"))
+                    except (TypeError, ValueError):
                         continue
-                    if lo >= 2 and not (set(original) & set(suggest)):
+                    verdicts[vid] = (bool(v.get("ok")),
+                                     str(v.get("fix") or "").strip())
+
+        verdicts = {}
+        batches = [cands[i:i + 8] for i in range(0, len(cands), 8)]
+
+        def _run_verify(batch_list):
+            out = []
+            with ThreadPoolExecutor(max_workers=min(8, len(batch_list))) as ex:
+                futs = [ex.submit(_verify, b) for b in batch_list]
+                for f in futs:
+                    try:
+                        out.append(f.result())
+                    except LLMError:
                         continue
-                else:
-                    # 蓝档（宽松，宁多勿漏供用户参考）：
-                    # A. 等长形近/音近：差异 1~2 字；零共享时仅限 1~2 字短词（长词零共享
-                    #    大概率是语义改写，靠 prompt 约束短词读音沾边）
-                    # B. 多/漏恰好一个字：短串必须能按顺序从长串中删一个字得到
-                    if lo == ls:
-                        ndiff = sum(1 for a, b in zip(original, suggest) if a != b)
-                        if ndiff == 0 or ndiff > 2:
-                            continue
-                        if lo > 2 and not (set(original) & set(suggest)):
-                            continue
-                    elif abs(lo - ls) == 1:
-                        short, longer = (original, suggest) if lo < ls else (suggest, original)
-                        if not is_subsequence(short, longer):
-                            continue
-                    else:
-                        continue
-                if not quote or len(quote) > 40 or original not in quote:
+            return out
+
+        if batches:
+            _collect(_run_verify(batches))
+            # 模型偶尔会漏答某个 id：对这些候选单独再问一次，避免真错字因为没有
+            # 审核结论被降级成“可疑”或丢弃
+            retry = [c for c in cands if c["id"] not in verdicts]
+            if retry:
+                _collect(_run_verify([[c] for c in retry]))
+        items = []
+        for c in cands:
+            if c["id"] in verdicts:
+                ok, fix = verdicts[c["id"]]
+                # 复核不通过的单轮候选多是作者本来的正常用词，直接丢弃；
+                # 两轮以上都报的保留为“可疑”，留给用户自行判断
+                if not ok and c["hits"] < 2:
                     continue
-                if text.count(quote) != 1:
-                    continue
-                key = (quote, original)
-                if key in seen:
-                    continue
-                seen.add(key)
-                items.append({"quote": quote, "original": original,
-                              "suggest": suggest, "level": level})
+                suggest = c["suggest"]
+                if ok and valid_pair(c["original"], fix) and \
+                        (len(c["suggests"]) == 1 or fix in c["suggests"] or c["hits"] == 1):
+                    suggest = fix
+                level = "high" if ok else "low"
+            else:
+                # 审核请求整体失败时回退到“多轮一致”判定，不影响基本可用性
+                agreed = c["hits"] >= 2 and len(c["suggests"]) == 1
+                suggest = c["suggest"]
+                level = "high" if (agreed or c["model_high"]) else "low"
+            items.append({"quote": c["quote"], "original": c["original"],
+                          "suggest": suggest, "level": level, "pos": c["pos"]})
+        # 同一位置可能被两轮用不同粒度报出（就是 / 就是以），只保留一个：
+        # 优先确定档，同级取更长的那个
+        items.sort(key=lambda x: (x["pos"], 0 if x["level"] == "high" else 1,
+                                  -(len(x["original"]))))
+        deduped, last_end = [], -1
+        for x in items:
+            if x["pos"] < last_end:
+                continue
+            last_end = x["pos"] + len(x["original"])
+            deduped.append(x)
+        items = deduped
+        items.sort(key=lambda x: 0 if x["level"] == "high" else 1)
         # 红档在前、蓝档在后，各自限量（红 12、蓝 15）
+        items = [{k: v for k, v in x.items() if k != "pos"} for x in items]
         highs = [x for x in items if x["level"] == "high"][:12]
         lows = [x for x in items if x["level"] == "low"][:15]
         self._send_json({"ok": True, "items": highs + lows,
