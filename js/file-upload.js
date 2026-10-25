@@ -631,6 +631,121 @@
     return Math.min(cut, yLim);
   }
 
+  // 稿纸栏缝「紧密线簇」检测（版面分析主路径，优先于栏缝空白检测）。
+  // 栏缝不是空白带，而是「右框线+分隔双线+左框线」紧排成的竖线簇（相邻间距 5~14px）；
+  // 栏内格线间距 ~30-45px 不会成簇——这是区分栏缝与栏内的稳定特征。
+  // 按矮横带找「带内密度 ≥75% 的细竖线」（手写笔画最高 ~40%，够不到阈值），
+  // 跨带追踪（允许随拍摄倾斜漂移），≥3 条轨迹紧密成簇且簇宽 12px~4%W 即栏缝。
+  // 检出后 splitPages 走「簇心直切」（逐栏整高裁块、不做带堆叠）：堆叠接缝与
+  // 边缘黑条会诱发视觉模型整段编造（实测同一张照片：直切三栏 351+354+70=775 字
+  // 全部真实；堆叠版中栏只吐出结尾一句，其余被幻觉替代）。
+  // 返回 { bands, cuts, straight:true }；检不出返回 null，回退 findGutterTracks。
+  function findBorderCuts(base) {
+    var w = base.width, h = base.height;
+    var ctx = base.getContext('2d');
+    var yTop = Math.round(h * 0.03), yEnd = Math.round(h * 0.99);
+    var bandH = Math.max(40, Math.round(h / 24));
+    var bands = [];
+    for (var by = yTop; by < yEnd - 20; by += bandH) {
+      var bh = Math.min(bandH, yEnd - by);
+      var data;
+      try { data = ctx.getImageData(0, by, w, bh).data; } catch (e) { return null; }
+      var samples = Math.ceil(bh / 2);
+      var need = Math.max(6, Math.round(samples * 0.75));
+      var dark = new Uint16Array(w), x, y, i, g;
+      for (y = 0; y < bh; y += 2) {
+        var rb = y * w * 4;
+        for (x = 0; x < w; x++) {
+          i = rb + x * 4;
+          g = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+          if (g < 120) dark[x]++; // 边线是浓墨印刷线，阈值比手写笔画更严
+        }
+      }
+      var lines = [], run = -1, sum = 0;
+      for (x = 0; x <= w; x++) {
+        if (x < w && dark[x] >= need) {
+          if (run < 0) { run = x; sum = 0; }
+          sum += x;
+        } else if (run >= 0) {
+          var n = x - run;
+          if (n <= w * 0.025) lines.push({ x: sum / n }); // 细线才是边线
+          run = -1;
+        }
+      }
+      bands.push({ y0: by, y1: by + bh, lines: lines });
+    }
+    if (bands.length < 6) return null;
+    // 跨带追踪：与最近轨迹衔接（漂移 ≤3%w），否则开新轨迹
+    var tracks = [];
+    bands.forEach(function (b, bi) {
+      b.lines.forEach(function (L) {
+        var best = null, bd = w * 0.03 + 1;
+        tracks.forEach(function (t) {
+          var last = t.pts[t.pts.length - 1];
+          if (last.band >= bi) return;
+          var d = Math.abs(L.x - last.x);
+          if (d < bd) { bd = d; best = t; }
+        });
+        if (best) best.pts.push({ band: bi, x: L.x });
+        else tracks.push({ pts: [{ band: bi, x: L.x }] });
+      });
+    });
+    var minBands = Math.max(4, Math.round(bands.length * 0.6));
+    tracks = tracks.filter(function (t) {
+      var seen = {};
+      t.pts.forEach(function (p) { seen[p.band] = 1; });
+      return Object.keys(seen).length >= minBands;
+    });
+    if (tracks.length < 3) return null;
+    tracks.sort(function (a, b2) {
+      return medianX(a) - medianX(b2);
+    });
+    function medianX(t) {
+      var xs = t.pts.map(function (p) { return p.x; }).sort(function (a2, b3) { return a2 - b3; });
+      return xs[Math.floor(xs.length / 2)];
+    }
+    function trackXAt(t, bi) {
+      for (var k = 0; k < t.pts.length; k++) if (t.pts[k].band === bi) return t.pts[k].x;
+      return null;
+    }
+    var meds = tracks.map(medianX);
+    // 紧密成簇：相邻轨迹中位数间距 ≤15px 归为一簇，≥3 条且簇宽 12px~4%W 才是栏缝
+    // （栏内格线间距 ~30-45px 不会成簇；孤立的页边/格线也成不了簇）。
+    var clusters = [];
+    var ti = 0;
+    while (ti < tracks.length) {
+      var tj = ti;
+      while (tj + 1 < tracks.length && meds[tj + 1] - meds[tj] <= 15) tj++;
+      if (tj - ti + 1 >= 3 && meds[tj] - meds[ti] >= 12 && meds[tj] - meds[ti] <= w * 0.04) {
+        clusters.push({ a: ti, b: tj, cx: (meds[ti] + meds[tj]) / 2 });
+      }
+      ti = tj + 1;
+    }
+    // 剔除贴页边的簇（页外框/桌面边缘），留下的才是栏缝
+    clusters = clusters.filter(function (cl) { return cl.cx > w * 0.06 && cl.cx < w * 0.94; });
+    if (clusters.length < 1 || clusters.length > 3) return null;
+    var nCol = clusters.length + 1;
+    var cuts = clusters.map(function (cl) { return cl.cx; });
+    // 栏宽合理性：每栏 12%~60% 图宽
+    var bounds = [0].concat(cuts).concat([w]);
+    for (var c = 0; c + 1 < bounds.length; c++) {
+      var cw2 = bounds[c + 1] - bounds[c];
+      if (cw2 < w * 0.12 || cw2 > w * 0.60) return null;
+    }
+    // bands 结构保留（每带切点=该带簇内实际轨迹中点，缺失用簇中心），
+    // straight 标记下 splitPages 只用全局 cuts 直切，bands 仅供排查。
+    var outBands = bands.map(function (b, bi) {
+      var bc = clusters.map(function (cl) {
+        var xa = trackXAt(tracks[cl.a], bi), xb = trackXAt(tracks[cl.b], bi);
+        if (xa === null) xa = meds[cl.a];
+        if (xb === null) xb = meds[cl.b];
+        return (xa + xb) / 2;
+      });
+      return { y0: b.y0, y1: b.y1, cuts: bc };
+    });
+    return { bands: outBands, cuts: cuts, straight: true };
+  }
+
   // 多栏稿纸栏缝检测（双栏/三栏通用，抗拍摄倾斜与透视）。
   // 整图竖直投影找不到栏缝：拍照透视会让栏缝位置随高度漂移（实测 3° 斜拍时
   // 漂移 ≈45px，超过栏缝自身宽度），且稿纸栏间常印有分隔线/框线，不存在
@@ -638,6 +753,7 @@
   // 每带独立找低密度竖带（栏缝），再跨带聚类出稳定栏缝（须出现在过半数带中，
   // 以此滤掉段末空格带、栏内字符间隙等只在局部出现的假缝）。
   // 返回 { bands: [{y0,y1,cuts:[x..]}], cuts: [聚类中心x..] }，检不出返回 null。
+  // 注：稿纸栏框有完整黑边时优先走 findBorderCuts，本函数作为无框稿纸的兜底。
   function findGutterTracks(base) {
     var w = base.width, h = base.height;
     var ctx = base.getContext('2d');
@@ -736,7 +852,7 @@
           bctx.fillStyle = '#fff';
           bctx.fillRect(0, 0, w, h);
           bctx.drawImage(img, 0, 0);
-          var tracks = findGutterTracks(base);
+          var tracks = findBorderCuts(base) || findGutterTracks(base);
           if (!tracks) { resolve(one); return; }
           var pad = 14, out = [];
           var midCut = tracks.cuts[Math.floor(tracks.cuts.length / 2)];
@@ -755,6 +871,26 @@
             hctx.fillRect(0, 0, hc.width, hc.height);
             hctx.drawImage(base, 0, 0, w, headBottom, pad, pad, hw2, hh2);
             out.push({ url: hc.toDataURL('image/jpeg', 0.9), w: hc.width, h: hc.height });
+          }
+          // 簇心直切：栏缝位置精确时，逐栏整高裁块即可。带堆叠会在栏图上留下
+          // 水平接缝、并把栏缝线簇的黑条残留在栏图两侧，实测会诱发视觉模型
+          // 整段编造（中栏只吐出结尾句），直切则三栏全部真实转写。
+          if (tracks.straight) {
+            var nColS = tracks.cuts.length + 1;
+            var sb = [0].concat(tracks.cuts).concat([w]);
+            for (ci = 0; ci < nColS; ci++) {
+              var sx0 = Math.round(sb[ci]), sx1 = Math.round(sb[ci + 1]);
+              var sw2 = sx1 - sx0;
+              if (sw2 < 20) continue;
+              var scv = document.createElement('canvas');
+              scv.width = sw2 + pad * 2; scv.height = bodyH + pad * 2;
+              var sctx = scv.getContext('2d');
+              sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, scv.width, scv.height);
+              sctx.drawImage(base, sx0, bodyY, sw2, bodyH, pad, pad, sw2, bodyH);
+              out.push({ url: scv.toDataURL('image/jpeg', 0.9), w: scv.width, h: scv.height });
+            }
+            resolve(out.length >= 2 ? out : one);
+            return;
           }
           // 按栏缝轨迹逐带裁块，同栏各带纵向堆叠成单栏页（左→中→右即阅读顺序）。
           // 每带的实际切点取「离聚类中心最近的带内候选」，该带缺失候选时用聚类中心。
