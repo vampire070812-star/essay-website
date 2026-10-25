@@ -907,6 +907,15 @@ textarea {
 }
 .upload-zone.busy { opacity: .7; pointer-events: none; }
 
+/* 识别结果处理方式（接在文后 / 替换正文） */
+.uz-mode { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; }
+.uzm-opt {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--ink-3); cursor: pointer; user-select: none;
+}
+.uzm-opt input { margin: 0; accent-color: var(--primary); cursor: pointer; }
+.uzm-opt:hover span { color: var(--primary); }
+
 .upload-progress {
   border: 1px solid var(--line); border-radius: 12px;
   padding: 12px 14px; margin-bottom: 10px; background: #fcfcfd;

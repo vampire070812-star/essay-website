@@ -93,7 +93,11 @@
   }
 
   /* ---------- 字数统计（考场占格口径：汉字与标点均占一格） ---------- */
-  function updateCount() { countEl.textContent = EssayEngine.gridLen(textEl.value); }
+  function updateCount() {
+    countEl.textContent = EssayEngine.gridLen(textEl.value);
+    // 正文有内容才显示「接在文后 / 替换正文」选项；任何填入正文的路径都会走这里
+    if (upMode) syncUploadMode();
+  }
   textEl.addEventListener('input', function () {
     updateCount();
     tipEl.textContent = '';
@@ -120,6 +124,7 @@
     titleEl.value = '';
     resetProof();
     updateCount();
+    syncUploadMode();
     textEl.focus();
   });
 
@@ -130,8 +135,36 @@
     upName = $('up-name'),
     upBar = $('up-bar'),
     upStatus = $('up-status'),
-    upCancel = $('up-cancel');
+    upCancel = $('up-cancel'),
+    upMode = $('uz-mode'),
+    upTitle = $('upload-title'),
+    upBtn = $('upload-btn');
   var uploadSeq = 0; // 用于取消后丢弃迟到的解析结果
+  var UPLOAD_TITLE_DEFAULT = upTitle.textContent;
+  var UPLOAD_BTN_DEFAULT = upBtn.textContent;
+
+  // 本次识别结果的处理方式：正文已有内容时默认「接在文后」，避免后一张照片覆盖前一张
+  function uploadMode() {
+    var r = upMode && upMode.querySelector('input[name="uz-mode"]:checked');
+    return r ? r.value : 'replace';
+  }
+  function syncUploadMode() {
+    if (!upMode) return;
+    var has = !!textEl.value.trim();
+    upMode.hidden = !has;
+    if (!has) setUploadHint(false);
+  }
+  function setUploadHint(continued) {
+    upTitle.textContent = continued ? '继续添加作文照片（识别结果接在上文之后）' : UPLOAD_TITLE_DEFAULT;
+    upBtn.textContent = continued ? '继续添加' : UPLOAD_BTN_DEFAULT;
+  }
+  // 点选项/单选钮不能冒泡成「打开文件选择框」
+  if (upMode) {
+    upMode.addEventListener('click', function (e) { e.stopPropagation(); });
+    upMode.addEventListener('keydown', function (e) { e.stopPropagation(); });
+  }
+  textEl.addEventListener('input', syncUploadMode);
+  syncUploadMode();
 
   /* ---------- 识别校对（疑似 OCR 错字标红 + 一键替换） ---------- */
   var proofCard = $('proof-card'),
@@ -489,6 +522,9 @@
     }
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
+    // 追加模式：正文已有内容且用户选择「接在文后」时，本次识别结果接在上文之后，
+    // 用于手机逐张拍照上传后续页（此前每传一张都会覆盖掉上一张）。
+    var append = !!textEl.value.trim() && uploadMode() === 'append';
     var dispName = list.length === 1 ? list[0].name : list.length + ' 张照片（按页序识别）';
     var seq = ++uploadSeq;
     upZone.classList.add('busy');
@@ -502,6 +538,34 @@
       setUploadProgress(dispName, p.status || '识别中……', p.ratio || 0);
     }).then(function (res) {
       if (seq !== uploadSeq) return;
+      var prev = textEl.value;
+      // 追加模式不改动题目框、不拆分题目：直接把本张识别文本接到正文末尾
+      if (append) {
+        var addText = res.text.trim();
+        var beforeLen = EssayEngine.gridLen(prev);
+        var merged = prev.replace(/[\s\u3000]+$/, '') + (addText ? '\n\n' + addText : '');
+        var addedLen = EssayEngine.gridLen(merged) - beforeLen;
+        textEl.value = merged;
+        updateCount();
+        var amsg = '✓ 已接在已有正文之后：本张 ' + addedLen + ' 字，全文 ' +
+          EssayEngine.gridLen(merged) + ' 字。';
+        if (res.dropped) {
+          amsg += '已自动剔除识别模型添加的 ' + res.dropped + ' 处无关说明。';
+        }
+        amsg += list.length > 1 ? '如需重新上传可清空正文后重来。' : '可继续点击上方「继续添加」补充后面的照片。';
+        upStatus.textContent = amsg;
+        upStatus.className = 'up-status ok';
+        upBox.classList.add('ok');
+        upBar.style.width = '100%';
+        upZone.classList.remove('busy');
+        tipEl.textContent = '';
+        tipEl.classList.remove('show');
+        setUploadHint(true);
+        textEl.focus();
+        textEl.setSelectionRange(merged.length, merged.length);
+        runProofread(merged);
+        return;
+      }
       // 图片 OCR 优先用 AI 提取题目材料（严格防编造+服务端硬校验），失败回退规则切分
       var pre = res.kind === 'image' ? aiSplitTitle(res.text) : Promise.resolve(null);
       return pre.then(function (ai) {
@@ -535,6 +599,8 @@
 
       textEl.value = bodyText;
       updateCount();
+      syncUploadMode();
+      setUploadHint(res.kind === 'image' && uploadMode() === 'append');
       var n = EssayEngine.gridLen(bodyText);
       var msg = '✓ 识别成功，共 ' + n + ' 字（含标点占格，与输入框计数一致）。' + splitMsg;
       if (res.dropped) {
@@ -542,6 +608,9 @@
       }
       if (res.kind === 'image') {
         msg += '。图片 OCR 可能有少量错字，请对照原文核对修改后再批改';
+        if (uploadMode() === 'append') {
+          msg += '；若这篇作文还有后续页，点上方「继续添加」逐张上传，识别结果会接在正文之后';
+        }
       }
       if (!/。$/.test(msg)) msg += '。';
       upStatus.textContent = msg;

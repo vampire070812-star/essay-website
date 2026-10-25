@@ -1,10 +1,10 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>作文批改 · 智能评分与修改建议</title>
-<link rel="stylesheet" href="styles.css?v=split48" />
+<link rel="stylesheet" href="styles.css?v=split53" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
 </head>
 <body>
@@ -103,6 +103,11 @@
           <div class="uz-main">
             <b id="upload-title">点击上传作文文件，或将文件拖到这里</b>
             <span id="upload-sub">支持 Word（.docx）、PDF、TXT、作文照片（手写拍照自动识别，可一次选多张按页拼接）· 文件含题目时会自动拆到上方，标题保留在正文首行</span>
+            <!-- 正文已有内容时出现：控制本次识别结果接在文后还是替换 -->
+            <div class="uz-mode" id="uz-mode" hidden role="radiogroup" aria-label="本次识别结果的处理方式">
+              <label class="uzm-opt"><input type="radio" name="uz-mode" value="append" checked /><span>接在已有正文之后</span></label>
+              <label class="uzm-opt"><input type="radio" name="uz-mode" value="replace" /><span>替换已有正文</span></label>
+            </div>
           </div>
           <span class="uz-btn" id="upload-btn">选择文件</span>
           <input type="file" id="essay-file" hidden multiple
@@ -419,7 +424,7 @@
 <script src="js/engine.js?v=split48"></script>
 <script src="js/ai-client.js?v=split48"></script>
 <script src="js/auth.js?v=split48"></script>
-<script src="js/app.js?v=split48"></script>
+<script src="js/app.js?v=split54"></script>
 </body>
 </html>
 
