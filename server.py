@@ -741,6 +741,10 @@ GRADE_SYSTEM_PROMPT = """你是上海市高考语文阅卷组专家，长期批�
 - 生硬堆砌（堆名言、贴哲学术语、为辩证而辩证、套模板结构）不仅不加分，还应作为“论证浮于表面”的细节影响你的整体印象与档内定位；
 - 细则中的所有“参照、特征、路径”都只是帮助你形成整体判断的阅卷经验倾向，不是逐条对照的评分项。四维档位诊断与总分都必须来自你对论证质量的整体判断。
 
+【转写噪声（手写照片转写特有，务必区分）】
+- 输入可能来自手写作文照片的机器转写，个别字词会被识别成形近/音近的错字，出现像“意味味着”“强国”“山茶绣回报”这类读不通的碎片。对这类明显无法还原语意的片段，按转写噪声处理：不要据此判定考生的语病、错别字或语言表达水平，也不要在评析里围绕它展开论证分析，按能正常读通的部分评价即可。
+- 但不要把考生真实的问题都推给转写：若一处表达换个理解后句意通顺、且属于常见的用词失误或逻辑跳跃，仍按考生的写作表现处理，不作开脱。
+
 【宽严校准（防止系统性偏低——这是未经校准的 AI 评卷的通病）】
 - 你的参照系是真实考场上十万考生的整体水平，不是文学期刊、不是满分范文。未经校准的 AI 评卷普遍比真实阅卷低半档（约 4-6 分），原因就是习惯拿范文标准挑剔考场急就章，你要主动反向校准；
 - 一篇审题准确、立意清楚、结构完整、语言通顺、无明显硬伤的合格作文，本身就已站在二类卷（52 分）之上——52 分不是奖励分，是“合格且完整”的自然落点；
@@ -1605,8 +1609,63 @@ def sanitize_ocr_text(raw):
     return text, dropped
 
 
-def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens, temperature=0.3):
-    """调用 OpenAI 兼容 chat/completions。返回报告 dict；失败抛 LLMError。"""
+# ---------- 结果缓存：同样的输入必须得到同样的结果 ----------
+# 大模型即使温度归零也不是严格确定的（MoE 路由、批处理都会带来抖动），
+# 而"同一篇作文两次批改判成两个档"会直接摧毁用户信任。
+# 因此按「输入内容」做短期缓存：文本一字不差地重复提交时，直接返回上次的
+# 完全相同的结果，不再重新调用模型（顺带节省额度与等待）。
+RESULT_CACHE_TTL = {
+    "grade": int(os.environ.get("GRADE_CACHE_TTL", "43200") or "0"),    # 12 小时
+    "analyze": int(os.environ.get("GRADE_CACHE_TTL", "43200") or "0"),
+    "ocr": int(os.environ.get("OCR_CACHE_TTL", "3600") or "0"),         # 1 小时
+}
+RESULT_CACHE_MAX = 400
+GRADE_PROMPT_VERSION = "g1"   # 批改提示词一旦改动就升级，让旧缓存失效
+_ResultCache = {}
+_ResultCacheLock = threading.Lock()
+
+
+def cache_key(*parts):
+    h = hashlib.sha256()
+    for p in parts:
+        h.update(str(p).encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def cache_get(kind, key):
+    ttl = RESULT_CACHE_TTL.get(kind, 0)
+    if ttl <= 0:
+        return None
+    now = time.time()
+    with _ResultCacheLock:
+        rec = _ResultCache.get((kind, key))
+        if not rec:
+            return None
+        if now - rec[0] > ttl:
+            _ResultCache.pop((kind, key), None)
+            return None
+        return rec[1]
+
+
+def cache_set(kind, key, val):
+    if RESULT_CACHE_TTL.get(kind, 0) <= 0:
+        return
+    now = time.time()
+    with _ResultCacheLock:
+        if len(_ResultCache) >= RESULT_CACHE_MAX:
+            for k in [k for k, v in _ResultCache.items()
+                      if now - v[0] > RESULT_CACHE_TTL.get(k[0], 0)]:
+                _ResultCache.pop(k, None)
+            while len(_ResultCache) >= RESULT_CACHE_MAX:
+                _ResultCache.pop(min(_ResultCache, key=lambda k: _ResultCache[k][0]), None)
+        _ResultCache[(kind, key)] = (now, val)
+
+
+def call_llm(api_key, base_url, model, system_prompt, user_content, max_tokens, temperature=0):
+    """调用 OpenAI 兼容 chat/completions。返回报告 dict；失败抛 LLMError。
+
+    默认温度 0：批改/审题是判定型任务，需要的是可复现的结论而不是文采。"""
     url = base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": model,
@@ -2548,8 +2607,20 @@ class Handler(BaseHTTPRequestHandler):
                 "图片里只有这一段的若干行字。请只照抄这张图上实际看得到的行，"
                 "不要补全上文、不要续写下文、不要根据话题自由发挥。" % (part_index, part_total)
             )
+        # 同一张图（字节完全相同）重复识别时返回上次的转写结果：
+        # 视觉模型本身不是严格确定的，同一张照片两次识别会给出不同文字，
+        # 进而让后续批改结果漂移；缓存把"同一张图 → 同一段文字"固定下来。
+        okey = cache_key("ocr", OCR_MODEL, image,
+                         part_index if isinstance(part_index, int) else 0,
+                         1 if data.get("titleBand") else 0)
+        hit = cache_get("ocr", okey)
+        if hit is not None:
+            self._send_json({"ok": True, "text": hit["text"],
+                             "engine": "vision", "model": OCR_MODEL,
+                             "droppedMeta": hit["droppedMeta"],
+                             "elapsed": 0.0, "cached": True})
+            return
         try:
-            # glm-4v-flash 的 max_tokens 上限为 1024（单页手写作文约 300-400 字，足够）
             raw_text = call_vision_llm(OCR_API_KEY, OCR_BASE_URL, OCR_MODEL,
                                        OCR_SYSTEM_PROMPT, image, max_tokens=1024,
                                        user_hint=user_hint)
@@ -2564,6 +2635,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if counted and user:
             db_usage_bump(user["id"], today_cn(), "analyzes")
+        cache_set("ocr", okey, {"text": text, "droppedMeta": dropped_meta})
         self._send_json({"ok": True, "text": text,
                          "engine": "vision", "model": OCR_MODEL,
                          "droppedMeta": dropped_meta,
@@ -2836,6 +2908,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         t0 = time.time()
+        prompt_text = (data.get("prompt") or "").strip()
+        essay_text = text
+        grid_count = len(re.sub(r'\s', '', essay_text))
+        target = data.get("target") or 800
+        # 同样的「作文 + 题目 + 目标字数 + 模型 + 提示词版本」必须得到同一份报告
+        gkey = cache_key("grade", GRADE_PROMPT_VERSION, model,
+                         essay_text, prompt_text, target)
+        cached = cache_get("grade", gkey)
+        if cached is not None:
+            self._send_json({"ok": True, "report": cached,
+                             "engine": "ai", "model": model,
+                             "elapsed": 0.0, "cached": True})
+            return
         try:
             report = call_llm(api_key, base_url, model,
                               GRADE_SYSTEM_PROMPT, build_grade_payload(data), MAX_TOKENS_GRADE)
@@ -2843,9 +2928,8 @@ class Handler(BaseHTTPRequestHandler):
             status = 401 if e.code == "auth_or_param" else (502 if e.code == "unavailable" else 500)
             self._send_json({"ok": False, "code": e.code, "message": str(e)}, status)
             return
-        essay_text = (data.get("text") or "").strip()
-        grid_count = len(re.sub(r'\s', '', essay_text))
-        report = calibrate_grade(report, grid_count, data.get("target") or 800)
+        report = calibrate_grade(report, grid_count, target)
+        cache_set("grade", gkey, report)
         if counted and user:
             db_usage_bump(user["id"], today_cn(), "grades")
         self._send_json({"ok": True, "report": report,
